@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
-import { db } from './confige';
+import { db } from './firebaseConfig';
 import AddItem from './AddItem';
 import { Plus, Edit, Trash2, Search } from 'lucide-react';
 

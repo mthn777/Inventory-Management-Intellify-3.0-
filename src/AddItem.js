@@ -3,8 +3,8 @@ import { X, Plus, ChevronDown, Upload, RotateCcw } from 'lucide-react';
 
 
 import { collection, addDoc } from 'firebase/firestore';
-import { firebase } from './confige';
-import { db } from './confige';
+// Removed unused named import { firebase } which doesn't exist in confige. We only need db.
+import { db } from './firebaseConfig';
 
 
 

@@ -28,7 +28,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { collection, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { db } from './confige';
+import { db } from './firebaseConfig';
 import Analytics from './Analytics';
 import Products from './Products';
 import AddItem from './AddItem';
