@@ -131,6 +131,7 @@ function Dashboard({ onLogout, userData }) {
           stockLevel: doc.data().stockLevel,
           category: doc.data().category,
           price: doc.data().price,
+          sellingPrice: doc.data().sellingPrice,
           expiryDate: doc.data().expiryDate,
           brand: doc.data().brand,
           quantity: doc.data().quantity,
@@ -859,8 +860,13 @@ function Dashboard({ onLogout, userData }) {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Price</label>
+                      <label className="block text-sm font-medium text-gray-500 mb-1">Cost Price</label>
                       <p className="text-base sm:text-lg font-semibold text-gray-900">${selectedProduct.price ? selectedProduct.price.toFixed(2) : 'N/A'}</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-500 mb-1">Selling Price</label>
+                      <p className="text-base sm:text-lg font-semibold text-gray-900">${selectedProduct.sellingPrice ? selectedProduct.sellingPrice.toFixed(2) : 'N/A'}</p>
                     </div>
 
                     <div>

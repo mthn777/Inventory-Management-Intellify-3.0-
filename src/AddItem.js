@@ -21,6 +21,7 @@ function AddItem({ onClose, onAddItem }) {
     unitOfMeasure: '',
     description: '',
     price: '',
+    sellingPrice: '',
     additionalInfo: '',
   });
 
@@ -71,6 +72,7 @@ function AddItem({ onClose, onAddItem }) {
         unitOfMeasure: formData.unitOfMeasure,
         description: formData.description,
         price: Number(formData.price),
+        sellingPrice: Number(formData.sellingPrice),
         additionalInfo: formData.additionalInfo,
         createdAt: new Date()
       });
@@ -96,6 +98,7 @@ function AddItem({ onClose, onAddItem }) {
         unitOfMeasure: '',
         description: '',
         price: '',
+        sellingPrice: '',
         additionalInfo: '',
       });
 
@@ -137,21 +140,37 @@ function AddItem({ onClose, onAddItem }) {
                 Product Details
               </h4>
 
-              {/* Product Name */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Product name
-                </label>
-                <input
-                  type="text"
-                  name="productName"
-                  value={formData.productName}
-                  onChange={handleInputChange}
-                  className="w-full px-3 py-2 border border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter product name"
-                  required
-                />
-              </div>
+                             {/* Product Name and SKU Row */}
+               <div className="grid grid-cols-2 gap-4">
+                 <div>
+                   <label className="block text-sm font-medium text-gray-700 mb-2">
+                     Product name
+                   </label>
+                   <input
+                     type="text"
+                     name="productName"
+                     value={formData.productName}
+                     onChange={handleInputChange}
+                     className="w-full px-3 py-2 border border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                     placeholder="Enter product name"
+                     required
+                   />
+                 </div>
+                 <div>
+                   <label className="block text-sm font-medium text-gray-700 mb-2">
+                     SKU
+                   </label>
+                   <input
+                     type="text"
+                     name="sku"
+                     value={formData.sku}
+                     onChange={handleInputChange}
+                     className="w-full px-3 py-2 border border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                     placeholder="Enter SKU"
+                     required
+                   />
+                 </div>
+               </div>
 
               {/* Stock Level and Expiry Date Row */}
               <div className="grid grid-cols-2 gap-4">
@@ -288,39 +307,41 @@ function AddItem({ onClose, onAddItem }) {
                 Pricing, Additional Information & Actions
               </h4>
 
-              {/* SKU and Price Row */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    SKU
-                  </label>
-                  <input
-                    type="text"
-                    name="sku"
-                    value={formData.sku}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Enter SKU"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Price
-                  </label>
-                  <input
-                    type="number"
-                    name="price"
-                    value={formData.price}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="0.00"
-                    min="0"
-                    step="0.01"
-                    required
-                  />
-                </div>
-              </div>
+                             {/* Cost Price and Selling Price Row */}
+               <div className="grid grid-cols-2 gap-4">
+                 <div>
+                   <label className="block text-sm font-medium text-gray-700 mb-2">
+                     Cost Price
+                   </label>
+                   <input
+                     type="number"
+                     name="price"
+                     value={formData.price}
+                     onChange={handleInputChange}
+                     className="w-full px-3 py-2 border border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                     placeholder="0.00"
+                     min="0"
+                     step="0.01"
+                     required
+                   />
+                 </div>
+                 <div>
+                   <label className="block text-sm font-medium text-gray-700 mb-2">
+                     Selling Price
+                   </label>
+                   <input
+                     type="number"
+                     name="sellingPrice"
+                     value={formData.sellingPrice}
+                     onChange={handleInputChange}
+                     className="w-full px-3 py-2 border border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                     placeholder="0.00"
+                     min="0"
+                     step="0.01"
+                     required
+                   />
+                 </div>
+               </div>
 
               {/* Additional Information */}
               <div>
