@@ -389,10 +389,11 @@ function App() {
             <div>
               <h4 className="font-semibold mb-4">Services</h4>
               <ul className="space-y-2 text-slate-400">
-                <li>Web Development</li>
-                <li>UI/UX Design</li>
-                <li>Mobile Apps</li>
-                <li>Consulting</li>
+                <li>Inventory Tracking</li>
+                <li>AI Predictions</li>
+                <li>Smart Alerts</li>
+                <li>Reporting & Analytics</li>
+                <li>Role-Based Security</li>
               </ul>
             </div>
             
