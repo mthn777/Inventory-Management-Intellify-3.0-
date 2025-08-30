@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { getDatabase, ref, set  } from 'firebase/database';
-import {app} from './firebaseConfig';
+import {app} from './confige';
 
 const db = getDatabase(app);
 
@@ -28,6 +28,12 @@ import Login from './Login';
 import Dashboard from './Dashboard';
 
 function App() {
+
+
+
+  
+
+
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState('home');

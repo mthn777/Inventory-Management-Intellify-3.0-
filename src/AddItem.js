@@ -1,7 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, Plus, ChevronDown, Upload, RotateCcw } from 'lucide-react';
 
+
+import { collection, addDoc } from 'firebase/firestore';
+import { firebase } from './confige';
+import { db } from './confige';
+
+
+
 function AddItem({ onClose, onAddItem }) {
+
   const [formData, setFormData] = useState({
     productName: '',
     sku: '',
@@ -14,7 +22,6 @@ function AddItem({ onClose, onAddItem }) {
     description: '',
     price: '',
     additionalInfo: '',
-    image: null
   });
 
   const [showAdditionalInfo, setShowAdditionalInfo] = useState(false);
@@ -27,28 +34,73 @@ function AddItem({ onClose, onAddItem }) {
     }));
   };
 
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setFormData(prev => ({
-        ...prev,
-        image: file
-      }));
-    }
-  };
 
-  const handleSubmit = (e) => {
+  // const handleSubmit = (e) => {
+  //   e.preventDefault();
+
+  //   // Validate required fields
+  //   if (!formData.productName || !formData.sku || !formData.stockLevel || !formData.expiryDate || !formData.price) {
+  //     alert('Please fill in all required fields: Product Name, SKU, Stock Level, Expiry Date, and Price');
+  //     return;
+  //   }
+
+  //   if (onAddItem) {
+  //     onAddItem(formData);
+  //     // Don't close modal here - let the parent component handle it after successful addition
+  //   }
+  // };
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     // Validate required fields
     if (!formData.productName || !formData.sku || !formData.stockLevel || !formData.expiryDate || !formData.price) {
       alert('Please fill in all required fields: Product Name, SKU, Stock Level, Expiry Date, and Price');
       return;
     }
-    
-    if (onAddItem) {
-      onAddItem(formData);
-      // Don't close modal here - let the parent component handle it after successful addition
+
+    try {
+      // Add to Firestore
+      await addDoc(collection(db, "inventory"), {
+        productName: formData.productName,
+        sku: formData.sku,
+        stockLevel: Number(formData.stockLevel),
+        expiryDate: formData.expiryDate,
+        brand: formData.brand,
+        category: formData.category,
+        quantity: formData.quantity,
+        unitOfMeasure: formData.unitOfMeasure,
+        description: formData.description,
+        price: Number(formData.price),
+        additionalInfo: formData.additionalInfo,
+        createdAt: new Date()
+      });
+
+      alert("Item added successfully!");
+
+      if (onAddItem) {
+        onAddItem(formData);
+      }
+
+      // Reset form after success
+      setFormData({
+        productName: '',
+        sku: '',
+        stockLevel: '',
+        expiryDate: '',
+        brand: '',
+        category: '',
+        quantity: '',
+        unitOfMeasure: '',
+        description: '',
+        price: '',
+        additionalInfo: '',
+      });
+
+      onClose();
+
+    } catch (error) {
+      console.error("Error adding document: ", error);
+      alert("Failed to add item!");
     }
   };
 
@@ -75,13 +127,13 @@ function AddItem({ onClose, onAddItem }) {
         {/* Modal Body */}
         <div className="p-6">
           <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            
+
             {/* Left Column - Product Details */}
             <div className="space-y-6">
               <h4 className="text-lg font-semibold text-gray-900 border-b border-gray-200 pb-2">
                 Product Details
               </h4>
-              
+
               {/* Product Name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -282,33 +334,6 @@ function AddItem({ onClose, onAddItem }) {
                 />
               </div>
 
-              {/* Upload Image */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Upload image
-                </label>
-                <div className="border-2 border-dashed border-blue-600 rounded-lg p-8 text-center hover:border-blue-700 transition-colors">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="hidden"
-                    id="image-upload"
-                  />
-                  <label htmlFor="image-upload" className="cursor-pointer">
-                    <Upload className="h-12 w-12 text-blue-600 mx-auto mb-4" />
-                    <p className="text-lg font-medium text-blue-600 mb-2">Upload image</p>
-                    <p className="text-sm text-gray-500">
-                      Click to browse or drag and drop
-                    </p>
-                    {formData.image && (
-                      <p className="text-sm text-green-600 mt-2">
-                        ✓ {formData.image.name}
-                      </p>
-                    )}
-                  </label>
-                </div>
-              </div>
 
               {/* Action Buttons */}
               <div className="flex space-x-4 pt-4">
