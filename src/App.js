@@ -11,7 +11,12 @@ import {
   Phone,
   MapPin,
   Send,
-  CheckCircle
+  CheckCircle,
+  BarChart,
+  BarChart3,
+  QrCode,
+  Bell,
+  BellRing
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Login from './Login';
@@ -59,9 +64,9 @@ function App() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center">
               <div className="h-10 w-10 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 flex items-center justify-center">
-                <span className="text-white font-bold text-xl">T</span>
+                <span className="text-white font-bold text-xl">Q</span>
               </div>
-              <span className="ml-3 text-xl font-bold text-slate-800">TechCraft</span>
+              <span className="ml-1 text-xl font-bold text-slate-800">Stocks</span>
             </div>
             
             {/* Desktop Navigation */}
@@ -136,13 +141,13 @@ function App() {
         <div className="max-w-7xl mx-auto text-center">
           <div className="max-w-4xl mx-auto">
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-slate-900 leading-tight">
-              Build Something
+              Making ease with
               <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                {' '}Amazing
+                {' '}QR Code Inventory
               </span>
             </h1>
             <p className="mt-6 text-xl text-slate-600 leading-relaxed">
-              Create stunning websites with our modern React framework. Fast, responsive, and beautiful by default.
+              A smart Inventory Management System using QR Codes and data-driven insights to make stock tracking simple, fast, and error-free.
             </p>
             <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
               <button 
@@ -186,26 +191,26 @@ function App() {
               Why Choose Us
             </h2>
             <p className="text-xl text-slate-600 max-w-2xl mx-auto">
-              We provide cutting-edge solutions that help you build faster, scale better, and deliver more value.
+              We help businesses eliminate the chaos of manual inventory by providing a fast, accurate, and intelligent stock management system.
             </p>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {[
               {
-                icon: Zap,
-                title: "Lightning Fast",
-                description: "Built with performance in mind, ensuring your website loads in milliseconds."
+                icon: BarChart3,
+                title: "Stock Analysis",
+                description: "Gain insights into sales, profits, and low-stock trends with real-time analytics."
               },
               {
-                icon: Shield,
-                title: "Secure by Default",
-                description: "Enterprise-grade security features built into every component."
+                icon: QrCode,
+                title: "Quick Access with QR",
+                description: "Scan QR codes to instantly view product details, update stock, and record sales."
               },
               {
-                icon: Users,
-                title: "Team Collaboration",
-                description: "Work together seamlessly with built-in collaboration tools."
+                icon: BellRing,
+                title: "Smart Alerts",
+                description: "Get notified about low stock levels, sales trends, and more with intelligent alerts."
               }
             ].map((feature, index) => (
               <div key={index} className="bg-gradient-to-br from-slate-50 to-white p-8 rounded-2xl border border-slate-200 hover:shadow-xl transition-all duration-300 transform hover:-translate-y-2">
@@ -216,7 +221,7 @@ function App() {
                 <p className="text-slate-600 leading-relaxed">{feature.description}</p>
               </div>
             ))}
-          </div>
+          </div> 
         </div>
       </section>
 
@@ -229,14 +234,14 @@ function App() {
                 About Our Company
               </h2>
               <p className="text-lg text-slate-600 mb-6 leading-relaxed">
-                We're a team of passionate developers and designers who believe in creating exceptional digital experiences. Our mission is to make web development accessible, enjoyable, and powerful.
+                We simplify inventory management with QR codes, smart alerts, and data-driven insights—helping businesses avoid stockouts, reduce waste, and make smarter decisions.
               </p>
               <div className="space-y-4">
                 {[
-                  "Modern React architecture",
-                  "Responsive design principles",
-                  "Performance optimization",
-                  "24/7 support"
+                  "Built for modern businesses, simple yet powerful",
+                  "Smart stock analysis with real-time insights",
+                  "Easy QR-based tracking for instant access",
+                  "Automated low-stock and expiry alerts"
                 ].map((item, index) => (
                   <div key={index} className="flex items-center">
                     <CheckCircle className="h-5 w-5 text-green-500 mr-3" />
@@ -255,8 +260,8 @@ function App() {
             <div className="relative">
               <div className="bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl p-8 text-white">
                 <div className="text-center">
-                  <div className="text-4xl font-bold mb-4">5+ Years</div>
-                  <div className="text-xl opacity-90">of Excellence</div>
+                  <div className="text-4xl font-bold mb-4">Launched in 2025</div>
+                  <div className="text-xl opacity-90">Early Adopters Growing Fast</div>
                   <div className="mt-6 flex justify-center space-x-2">
                     {[...Array(5)].map((_, i) => (
                       <Star key={i} className="h-6 w-6 fill-current" />
@@ -300,7 +305,7 @@ function App() {
                   </div>
                   <div>
                     <div className="font-medium text-slate-900">Phone</div>
-                    <div className="text-slate-600">+91 123-4567-890</div>
+                    <div className="text-slate-600">+91 9023403191</div>
                   </div>
                 </div>
                 <div className="flex items-center">
@@ -361,9 +366,9 @@ function App() {
             <div className="col-span-1 md:col-span-2">
               <div className="flex items-center mb-4">
                 <div className="h-10 w-10 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 flex items-center justify-center">
-                  <span className="text-white font-bold text-xl">T</span>
+                  <span className="text-white font-bold text-xl">Q</span>
                 </div>
-                <span className="ml-3 text-xl font-bold">TechCraft</span>
+                <span className="ml-1 text-xl font-bold">Stocks</span>
               </div>
               <p className="text-slate-400 mb-4 max-w-md">
                 Building the future of web development with modern tools and exceptional design.
