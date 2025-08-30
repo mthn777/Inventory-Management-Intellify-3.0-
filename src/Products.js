@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
   Search, 
@@ -10,71 +10,12 @@ import {
   SortAsc,
   SortDesc
 } from 'lucide-react';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from './firebaseConfig';
+import AddItem from './AddItem';
 
 function Products() {
-  const [products, setProducts] = useState([
-    { 
-      id: 1, 
-      name: 'Fresh Organic Bananas', 
-      status: 'In Stock', 
-      stockLevel: 150, 
-      category: 'Fruits', 
-      expiryDate: '2024-12-25',
-      price: 2.99,
-      cost: 1.50,
-      description: 'Fresh organic bananas from local farms',
-      supplier: 'Organic Valley Farms',
-      sku: 'BAN-001',
-      weight: '1kg',
-      location: 'Aisle 3, Shelf 2'
-    },
-    { 
-      id: 2, 
-      name: 'Whole Grain Bread', 
-      status: 'Low Stock', 
-      stockLevel: 8, 
-      category: 'Bakery', 
-      expiryDate: '2025-01-15',
-      price: 3.49,
-      cost: 2.20,
-      description: 'Fresh whole grain bread baked daily',
-      supplier: 'Artisan Bakery Co.',
-      sku: 'BRD-002',
-      weight: '500g',
-      location: 'Aisle 1, Shelf 1'
-    },
-    { 
-      id: 3, 
-      name: 'Organic Milk 2L', 
-      status: 'In Stock', 
-      stockLevel: 45, 
-      category: 'Dairy', 
-      expiryDate: '2024-12-20',
-      price: 4.99,
-      cost: 3.50,
-      description: 'Fresh organic whole milk',
-      supplier: 'Dairy Fresh Ltd.',
-      sku: 'MLK-003',
-      weight: '2L',
-      location: 'Aisle 2, Shelf 3'
-    },
-    { 
-      id: 4, 
-      name: 'Fresh Tomatoes', 
-      status: 'Out of Stock', 
-      stockLevel: 0, 
-      category: 'Vegetables', 
-      expiryDate: '2024-12-30',
-      price: 1.99,
-      cost: 1.20,
-      description: 'Fresh vine-ripened tomatoes',
-      supplier: 'Green Valley Produce',
-      sku: 'TOM-004',
-      weight: '500g',
-      location: 'Aisle 4, Shelf 1'
-    }
-  ]);
-
+  const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
@@ -98,6 +39,37 @@ function Products() {
     weight: '',
     location: ''
   });
+
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, "inventory"));
+        const productsData = [];
+        querySnapshot.forEach((doc) => {
+          productsData.push({
+            id: doc.id,
+            name: doc.data().productName,
+            sku: doc.data().sku,
+            status: doc.data().stockLevel > 20 ? 'In Stock' : doc.data().stockLevel > 0 ? 'Low Stock' : 'Out of Stock',
+            stockLevel: doc.data().stockLevel,
+            category: doc.data().category,
+            price: doc.data().price,
+            cost: doc.data().cost,
+            description: doc.data().description,
+            supplier: doc.data().supplier,
+            weight: doc.data().weight,
+            location: doc.data().location,
+            expiryDate: doc.data().expiryDate
+          });
+        });
+        setProducts(productsData);
+      } catch (error) {
+        console.error("Error fetching products: ", error);
+        alert("Failed to fetch products!");
+      }
+    };
+    fetchProducts();
+  }, []);
 
   // Filter and sort products
   const filteredProducts = products
@@ -221,6 +193,16 @@ function Products() {
     window.URL.revokeObjectURL(url);
   };
 
+  // Add this handler to refresh products after adding
+  const handleAddItem = (added) => {
+    setShowAddModal(false);
+    if (added) {
+      alert('Product added successfully!');
+      // Optionally, refetch products here if not using Firestore real-time updates
+      // fetchProducts();
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
       {/* Header */}
@@ -242,8 +224,8 @@ function Products() {
               onClick={() => setShowAddModal(true)}
               className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Product
+              <Plus className="h-5 w-5 mr-2" />
+              Add Item
             </button>
           </div>
         </div>
@@ -278,6 +260,31 @@ function Products() {
               <option value="Dairy">Dairy</option>
               <option value="Bakery">Bakery</option>
               <option value="Beverages">Beverages</option>
+              <option value="Snacks">Snacks</option>
+              <option value="Meat">Meat</option>
+              <option value="Seafood">Seafood</option>
+              <option value="Frozen">Frozen</option>
+              <option value="Pantry">Pantry</option>
+              <option value="Personal Care">Personal Care</option>
+              <option value="Household">Household</option>
+              <option value="Condiments">Condiments</option>
+              <option value="Grains">Grains</option>
+              <option value="Spices">Spices</option>
+              <option value="Electronics">Electronics</option>
+              <option value="Clothing">Clothing</option>
+              <option value="Stationery">Stationery</option>
+              <option value="Footwear">Footwear</option>
+              <option value="Accessories">Accessories</option>
+              <option value="Cosmetics">Cosmetics</option>
+              <option value="Toys">Toys</option>
+              <option value="Books">Books</option>
+              <option value="Jewelry">Jewelry</option>
+              <option value="Nuts">Nuts</option>
+              <option value="Automotive">Automotive</option>
+              <option value="Sports">Sports</option>
+              <option value="Furniture">Furniture</option>
+              <option value="Appliances">Appliances</option>
+              <option value="Others">Others</option>
             </select>
           </div>
           <div>
@@ -508,167 +515,12 @@ function Products() {
         </div>
       </div>
 
-      {/* Add Product Modal */}
+      {/* Add Product Modal using AddItem.js */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-6 text-white rounded-t-xl">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xl font-semibold">Add New Product</h3>
-                <button
-                  onClick={() => setShowAddModal(false)}
-                  className="text-white hover:text-gray-200 transition-colors"
-                >
-                  <X className="h-6 w-6" />
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6">
-              <form onSubmit={(e) => { e.preventDefault(); handleAddProduct(); }} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Product Name *</label>
-                    <input
-                      type="text"
-                      value={newProduct.name}
-                      onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Category *</label>
-                    <select
-                      value={newProduct.category}
-                      onChange={(e) => setNewProduct({...newProduct, category: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      required
-                    >
-                      <option value="Fruits">Fruits</option>
-                      <option value="Vegetables">Vegetables</option>
-                      <option value="Dairy">Dairy</option>
-                      <option value="Bakery">Bakery</option>
-                      <option value="Beverages">Beverages</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Stock Level *</label>
-                    <input
-                      type="number"
-                      value={newProduct.stockLevel}
-                      onChange={(e) => setNewProduct({...newProduct, stockLevel: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      min="0"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Status *</label>
-                    <select
-                      value={newProduct.status}
-                      onChange={(e) => setNewProduct({...newProduct, status: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      required
-                    >
-                      <option value="In Stock">In Stock</option>
-                      <option value="Low Stock">Low Stock</option>
-                      <option value="Out of Stock">Out of Stock</option>
-                      <option value="On Order">On Order</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Price</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newProduct.price}
-                      onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Cost</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newProduct.cost}
-                      onChange={(e) => setNewProduct({...newProduct, cost: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Expiry Date *</label>
-                    <input
-                      type="date"
-                      value={newProduct.expiryDate}
-                      onChange={(e) => setNewProduct({...newProduct, expiryDate: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">SKU</label>
-                    <input
-                      type="text"
-                      value={newProduct.sku}
-                      onChange={(e) => setNewProduct({...newProduct, sku: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-                  <textarea
-                    value={newProduct.description}
-                    onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
-                    rows="3"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Supplier</label>
-                    <input
-                      type="text"
-                      value={newProduct.supplier}
-                      onChange={(e) => setNewProduct({...newProduct, supplier: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Weight/Size</label>
-                    <input
-                      type="text"
-                      value={newProduct.weight}
-                      onChange={(e) => setNewProduct({...newProduct, weight: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="e.g., 500g, 1L"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex space-x-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddModal(false)}
-                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:shadow-lg transition-all duration-300"
-                  >
-                    Add Product
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <AddItem
+          onClose={() => setShowAddModal(false)}
+          onAddItem={handleAddItem}
+        />
       )}
 
       {/* Edit Product Modal */}
@@ -713,6 +565,31 @@ function Products() {
                       <option value="Dairy">Dairy</option>
                       <option value="Bakery">Bakery</option>
                       <option value="Beverages">Beverages</option>
+                      <option value="Snacks">Snacks</option>
+                      <option value="Meat">Meat</option>
+                      <option value="Seafood">Seafood</option>
+                      <option value="Frozen">Frozen</option>
+                      <option value="Pantry">Pantry</option>
+                      <option value="Personal Care">Personal Care</option>
+                      <option value="Household">Household</option>
+                      <option value="Condiments">Condiments</option>
+                      <option value="Grains">Grains</option>
+                      <option value="Spices">Spices</option>
+                      <option value="Electronics">Electronics</option>
+                      <option value="Clothing">Clothing</option>
+                      <option value="Stationery">Stationery</option>
+                      <option value="Footwear">Footwear</option>
+                      <option value="Accessories">Accessories</option>
+                      <option value="Cosmetics">Cosmetics</option>
+                      <option value="Toys">Toys</option>
+                      <option value="Books">Books</option>
+                      <option value="Jewelry">Jewelry</option>
+                      <option value="Nuts">Nuts</option>
+                      <option value="Automotive">Automotive</option>
+                      <option value="Sports">Sports</option>
+                      <option value="Furniture">Furniture</option>
+                      <option value="Appliances">Appliances</option>
+                      <option value="Others">Others</option>
                     </select>
                   </div>
                   <div>
