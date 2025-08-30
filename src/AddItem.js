@@ -60,7 +60,7 @@ function AddItem({ onClose, onAddItem }) {
 
     try {
       // Add to Firestore
-      await addDoc(collection(db, "inventory"), {
+      const docRef = await addDoc(collection(db, "inventory"), {
         productName: formData.productName,
         sku: formData.sku,
         stockLevel: Number(formData.stockLevel),
@@ -78,7 +78,10 @@ function AddItem({ onClose, onAddItem }) {
       alert("Item added successfully!");
 
       if (onAddItem) {
-        onAddItem(formData);
+        onAddItem({
+          ...formData,
+          id: docRef.id // Pass the Firebase document ID
+        });
       }
 
       // Reset form after success

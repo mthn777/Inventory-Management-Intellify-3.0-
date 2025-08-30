@@ -27,6 +27,8 @@ import {
   CheckCircle,
   AlertTriangle
 } from 'lucide-react';
+import { collection, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { db } from './confige';
 import Analytics from './Analytics';
 import Products from './Products';
 import AddItem from './AddItem';
@@ -109,6 +111,44 @@ function Dashboard({ onLogout, userData }) {
     };
   }, [sidebarOpen]);
 
+  // Fetch products from Firebase on component mount
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  // Function to fetch products from Firebase
+  const fetchProducts = async () => {
+    setIsLoading(true);
+    try {
+      const querySnapshot = await getDocs(collection(db, "inventory"));
+      const productsData = [];
+      querySnapshot.forEach((doc) => {
+        productsData.push({
+          id: doc.id,
+          name: doc.data().productName,
+          sku: doc.data().sku,
+          status: doc.data().stockLevel > 20 ? 'In Stock' : doc.data().stockLevel > 0 ? 'Low Stock' : 'Out of Stock',
+          stockLevel: doc.data().stockLevel,
+          category: doc.data().category,
+          price: doc.data().price,
+          expiryDate: doc.data().expiryDate,
+          brand: doc.data().brand,
+          quantity: doc.data().quantity,
+          unitOfMeasure: doc.data().unitOfMeasure,
+          description: doc.data().description,
+          additionalInfo: doc.data().additionalInfo,
+          createdAt: doc.data().createdAt
+        });
+      });
+      setProducts(productsData);
+    } catch (error) {
+      console.error("Error fetching products: ", error);
+      alert("Failed to fetch products!");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
@@ -133,27 +173,54 @@ function Dashboard({ onLogout, userData }) {
   };
 
   // Handle delete product
-  const handleDeleteProduct = (product) => {
+  const handleDeleteProduct = async (product) => {
     if (window.confirm(`Are you sure you want to delete "${product.name}"?`)) {
-      setProducts(products.filter(p => p.name !== product.name));
-      alert('Product deleted successfully!');
+      try {
+        await deleteDoc(doc(db, "inventory", product.id));
+        setProducts(products.filter(p => p.id !== product.id));
+        alert('Product deleted successfully!');
+      } catch (error) {
+        console.error("Error deleting product: ", error);
+        alert("Failed to delete product!");
+      }
     }
   };
 
   // Handle updating product
-  const handleUpdateProduct = () => {
+  const handleUpdateProduct = async () => {
     if (!selectedProduct.name || !selectedProduct.stockLevel || !selectedProduct.expiryDate) {
       alert('Please fill in all required fields');
       return;
     }
 
-    setProducts(products.map(p =>
-      p.name === selectedProduct.name ? selectedProduct : p
-    ));
+    try {
+      const docRef = doc(db, "inventory", selectedProduct.id);
+      await updateDoc(docRef, {
+        productName: selectedProduct.name,
+        sku: selectedProduct.sku,
+        stockLevel: Number(selectedProduct.stockLevel),
+        expiryDate: selectedProduct.expiryDate,
+        brand: selectedProduct.brand,
+        category: selectedProduct.category,
+        quantity: selectedProduct.quantity,
+        unitOfMeasure: selectedProduct.unitOfMeasure,
+        description: selectedProduct.description,
+        price: Number(selectedProduct.price),
+        additionalInfo: selectedProduct.additionalInfo,
+        updatedAt: new Date()
+      });
 
-    setShowEditModal(false);
-    setSelectedProduct(null);
-    alert('Product updated successfully!');
+      setProducts(products.map(p =>
+        p.id === selectedProduct.id ? selectedProduct : p
+      ));
+
+      setShowEditModal(false);
+      setSelectedProduct(null);
+      alert('Product updated successfully!');
+    } catch (error) {
+      console.error("Error updating product: ", error);
+      alert("Failed to update product!");
+    }
   };
 
   // Handle adding new item
@@ -176,11 +243,11 @@ function Dashboard({ onLogout, userData }) {
       price: parseFloat(formData.price),
       additionalInfo: formData.additionalInfo,
       image: formData.image,
-      status: 'In Stock',
-      id: Date.now() // Simple ID generation
+      status: formData.stockLevel > 20 ? 'In Stock' : formData.stockLevel > 0 ? 'Low Stock' : 'Out of Stock',
+      id: formData.id || Date.now() // Use Firebase ID if available
     };
 
-    // Add to products array (in a real app, this would go to a database)
+    // Add to products array
     setProducts([...products, itemToAdd]);
 
     // Clear search term so new product is visible
@@ -221,12 +288,8 @@ function Dashboard({ onLogout, userData }) {
     { user: 'Emily Brown', action: 'marked out of stock', product: 'Fresh Tomatoes', time: '1 day ago', avatar: 'EB' }
   ];
 
-  const [products, setProducts] = useState([
-    { name: 'Fresh Organic Bananas', sku: 'BAN001', status: 'In Stock', stockLevel: 150, category: 'Fruits', price: 2.99, expiryDate: '2024-12-25', brand: 'Organic Valley', quantity: '1', unitOfMeasure: 'bunch', description: 'Fresh organic bananas from local farms' },
-    { name: 'Whole Grain Bread', sku: 'BRD001', status: 'Low Stock', stockLevel: 8, category: 'Bakery', price: 3.49, expiryDate: '2025-01-15', brand: 'Artisan Bakery', quantity: '1', unitOfMeasure: 'loaf', description: 'Fresh whole grain bread made daily' },
-    { name: 'Organic Milk 2L', sku: 'MLK001', status: 'In Stock', stockLevel: 45, category: 'Dairy', price: 4.99, expiryDate: '2024-12-20', brand: 'Organic Valley', quantity: '2', unitOfMeasure: 'liters', description: 'Fresh organic whole milk' },
-    { name: 'Fresh Tomatoes', sku: 'TOM001', status: 'Out of Stock', stockLevel: 0, category: 'Vegetables', price: 1.99, expiryDate: '2024-12-30', brand: 'Local Farm', quantity: '1', unitOfMeasure: 'kg', description: 'Fresh vine-ripened tomatoes' }
-  ]);
+  const [products, setProducts] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -495,24 +558,37 @@ function Dashboard({ onLogout, userData }) {
                     <div>
                       <h3 className="text-lg font-semibold text-gray-900">Active Products</h3>
                       <p className="text-sm text-gray-500 mt-1">
-                        {searchTerm ? `Showing ${filteredProducts.length} of ${products.length} products` : `Total: ${products.length} products`}
+                        {isLoading ? 'Loading products...' : searchTerm ? `Showing ${filteredProducts.length} of ${products.length} products` : `Total: ${products.length} products`}
                       </p>
                     </div>
-                    <button
-                      onClick={() => setShowAddItemModal(true)}
-                      className="h-12 w-12 px-3 sm:px-4 py-2 rounded-full transition-all flex items-center justify-center text-sm sm:text-base shadow-lg fixed bottom-6 right-6 z-30 bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700"
-                    >
-                      <Plus className="h-5 w-5 " />
-                      {/* <span className="hidden sm:inline">Add Item</span> */}
-                      <span className="sm:hidden">Add</span>
-                    </button>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={fetchProducts}
+                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                        disabled={isLoading}
+                      >
+                        {isLoading ? 'Loading...' : 'Refresh'}
+                      </button>
+                      <button
+                        onClick={() => setShowAddItemModal(true)}
+                        className="h-12 w-12 px-3 sm:px-4 py-2 rounded-full transition-all flex items-center justify-center text-sm sm:text-base shadow-lg fixed bottom-6 right-6 z-30 bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700"
+                      >
+                        <Plus className="h-5 w-5 " />
+                        <span className="sm:hidden">Add</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
                 {/* Mobile Cards View */}
                 <div className="block lg:hidden">
                   <div className="p-4 space-y-4">
-                    {(searchTerm ? filteredProducts : products).length > 0 ? (
+                    {isLoading ? (
+                      <div className="flex justify-center items-center py-8">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                        <span className="ml-3 text-gray-600">Loading products...</span>
+                      </div>
+                    ) : (searchTerm ? filteredProducts : products).length > 0 ? (
                       (searchTerm ? filteredProducts : products).map((product, index) => (
                         <div key={index} className="bg-gray-50 rounded-lg p-4 space-y-3">
                           <div className="flex items-start justify-between">
@@ -595,7 +671,16 @@ function Dashboard({ onLogout, userData }) {
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {(searchTerm ? filteredProducts : products).length > 0 ? (
+                      {isLoading ? (
+                        <tr>
+                          <td colSpan="8" className="px-6 py-8 text-center">
+                            <div className="flex justify-center items-center">
+                              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                              <span className="ml-3 text-gray-600">Loading products...</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (searchTerm ? filteredProducts : products).length > 0 ? (
                         (searchTerm ? filteredProducts : products).map((product, index) => (
                           <tr key={product.id || index} className="hover:bg-gray-50">
                             <td className="px-6 py-4 whitespace-nowrap">
