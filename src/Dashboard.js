@@ -822,68 +822,82 @@ function Dashboard({ onLogout, userData }) {
                   </div>
                 </div>
 
-                {/* Modal Body */}
-                <div className="p-4 sm:p-6">
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Product Name</label>
-                      <p className="text-base sm:text-lg font-semibold text-gray-900">{selectedProduct.name}</p>
-                    </div>
+                                 {/* Modal Body */}
+                 <div className="p-4 sm:p-6">
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                     {/* Left Column - Basic Information */}
+                     <div className="space-y-4">
+                       <h4 className="text-sm font-semibold text-gray-700 border-b border-gray-200 pb-2 mb-4">
+                         Basic Information
+                       </h4>
+                       
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Product Name</label>
+                         <p className="text-base sm:text-lg font-semibold text-gray-900">{selectedProduct.name}</p>
+                       </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">SKU</label>
-                      <p className="text-base text-gray-900">{selectedProduct.sku || 'N/A'}</p>
-                    </div>
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">SKU</label>
+                         <p className="text-base text-gray-900">{selectedProduct.sku || 'N/A'}</p>
+                       </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Category</label>
-                      <span className="inline-flex px-3 py-1 text-sm font-medium rounded-full bg-blue-100 text-blue-800">
-                        {selectedProduct.category}
-                      </span>
-                    </div>
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Category</label>
+                         <span className="inline-flex px-3 py-1 text-sm font-medium rounded-full bg-blue-100 text-blue-800">
+                           {selectedProduct.category}
+                         </span>
+                       </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Brand</label>
-                      <p className="text-base text-gray-900">{selectedProduct.brand || 'N/A'}</p>
-                    </div>
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Brand</label>
+                         <p className="text-base text-gray-900">{selectedProduct.brand || 'N/A'}</p>
+                       </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Stock Level</label>
-                      <p className="text-base sm:text-lg font-semibold text-gray-900">{selectedProduct.stockLevel} units</p>
-                    </div>
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Description</label>
+                         <p className="text-base text-gray-900">{selectedProduct.description || 'No description available'}</p>
+                       </div>
+                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Status</label>
-                      <span className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${getStatusColor(selectedProduct.status)}`}>
-                        {selectedProduct.status}
-                      </span>
-                    </div>
+                     {/* Right Column - Inventory & Pricing */}
+                     <div className="space-y-4">
+                       <h4 className="text-sm font-semibold text-gray-700 border-b border-gray-200 pb-2 mb-4">
+                         Inventory & Pricing
+                       </h4>
+                       
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Stock Level</label>
+                         <p className="text-base sm:text-lg font-semibold text-gray-900">{selectedProduct.stockLevel} units</p>
+                       </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Cost Price</label>
-                      <p className="text-base sm:text-lg font-semibold text-gray-900">${selectedProduct.price ? selectedProduct.price.toFixed(2) : 'N/A'}</p>
-                    </div>
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Status</label>
+                         <span className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${getStatusColor(selectedProduct.status)}`}>
+                           {selectedProduct.status}
+                         </span>
+                       </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Selling Price</label>
-                      <p className="text-base sm:text-lg font-semibold text-gray-900">${selectedProduct.sellingPrice ? selectedProduct.sellingPrice.toFixed(2) : 'N/A'}</p>
-                    </div>
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Cost Price</label>
+                         <p className="text-base sm:text-lg font-semibold text-gray-900">${selectedProduct.price ? selectedProduct.price.toFixed(2) : 'N/A'}</p>
+                       </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Quantity & Unit</label>
-                      <p className="text-base text-gray-900">{selectedProduct.quantity || 'N/A'} {selectedProduct.unitOfMeasure || ''}</p>
-                    </div>
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Selling Price</label>
+                         <p className="text-base sm:text-lg font-semibold text-gray-900">${selectedProduct.sellingPrice ? selectedProduct.sellingPrice.toFixed(2) : 'N/A'}</p>
+                       </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Description</label>
-                      <p className="text-base text-gray-900">{selectedProduct.description || 'No description available'}</p>
-                    </div>
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Quantity & Unit</label>
+                         <p className="text-base text-gray-900">{selectedProduct.quantity || 'N/A'} {selectedProduct.unitOfMeasure || ''}</p>
+                       </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Expiry Date</label>
-                      <p className="text-base sm:text-lg font-semibold text-gray-900">{formatDate(selectedProduct.expiryDate)}</p>
-                    </div>
-                  </div>
+                       <div>
+                         <label className="block text-sm font-medium text-gray-500 mb-1">Expiry Date</label>
+                         <p className="text-base sm:text-lg font-semibold text-gray-900">{formatDate(selectedProduct.expiryDate)}</p>
+                       </div>
+                     </div>
+                   </div>
 
                   <div className="mt-6 pt-4 border-t border-gray-200">
                     <button
