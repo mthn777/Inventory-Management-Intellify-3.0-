@@ -1,4 +1,9 @@
 import React, { useState } from 'react';
+import { getDatabase, ref, set  } from 'firebase/database';
+import {app} from './firebaseConfig';
+
+const db = getDatabase(app);
+
 import { 
   Menu, 
   X, 
@@ -23,6 +28,7 @@ import Login from './Login';
 import Dashboard from './Dashboard';
 
 function App() {
+
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState('home');
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -57,6 +63,9 @@ function App() {
 
   // Otherwise show main website
   return (
+
+    
+
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       {/* Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
@@ -95,6 +104,9 @@ function App() {
                 Get Started
               </button>
             </div>
+
+
+           
 
             {/* Mobile menu button */}
             <div className="md:hidden">
