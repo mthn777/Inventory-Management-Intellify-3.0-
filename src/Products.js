@@ -8,11 +8,13 @@ import {
   Download,
   X,
   SortAsc,
-  SortDesc
+  SortDesc,
+  QrCode
 } from 'lucide-react';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 import AddItem from './AddItem';
+import { QRCodeCanvas } from 'qrcode.react';
 
 function Products() {
   const [products, setProducts] = useState([]);
@@ -25,6 +27,9 @@ function Products() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [qrModalProduct, setQrModalProduct] = useState(null);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [qrGenerating, setQrGenerating] = useState(false);
   const [newProduct, setNewProduct] = useState({
     name: '',
     category: 'Fruits',
@@ -59,7 +64,8 @@ function Products() {
             supplier: doc.data().supplier,
             weight: doc.data().weight,
             location: doc.data().location,
-            expiryDate: doc.data().expiryDate
+              expiryDate: doc.data().expiryDate,
+              qrCode: doc.data().qrCode || null
           });
         });
         setProducts(productsData);
@@ -200,6 +206,32 @@ function Products() {
       alert('Product added successfully!');
       // Optionally, refetch products here if not using Firestore real-time updates
       // fetchProducts();
+    }
+  };
+
+  const openQRModal = async (product) => {
+    setQrModalProduct(product);
+    setShowQRModal(true);
+    if (!product.qrCode) {
+      await generateQR(product);
+    }
+  };
+
+  const generateQR = async (product) => {
+    if (qrGenerating) return;
+    try {
+      setQrGenerating(true);
+      const payload = JSON.stringify({ type: 'inventory_item', id: product.id, sku: product.sku });
+      const QRCode = (await import('qrcode')).default;
+      const dataUrl = await QRCode.toDataURL(payload, { margin: 1, scale: 6 });
+      await updateDoc(doc(db, 'inventory', product.id), { qrCode: dataUrl, qrPayload: payload });
+      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, qrCode: dataUrl } : p));
+      setQrModalProduct(prev => prev ? { ...prev, qrCode: dataUrl } : prev);
+    } catch (e) {
+      console.error('QR generation failed', e);
+      alert('Failed to generate QR code');
+    } finally {
+      setQrGenerating(false);
     }
   };
 
@@ -401,7 +433,7 @@ function Products() {
                     </div>
                     <div>
                       <span className="text-gray-500">Price:</span>
-                      <span className="ml-1 font-medium text-gray-900">${product.price}</span>
+                      <span className="ml-1 font-medium text-gray-900">₹{product.price}</span>
                     </div>
                     <div>
                       <span className="text-gray-500">SKU:</span>
@@ -465,8 +497,8 @@ function Products() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">${product.price}</div>
-                      <div className="text-xs text-gray-500">Cost: ${product.cost}</div>
+                      <div className="text-sm font-medium text-gray-900">₹{product.price}</div>
+                      <div className="text-xs text-gray-500">Cost: ₹{product.cost}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{product.sku}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatDate(product.expiryDate)}</td>
@@ -498,6 +530,13 @@ function Products() {
                           title="Delete Product"
                         >
                           <Trash2 className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => openQRModal(product)}
+                          className="text-indigo-600 hover:text-indigo-900 p-1 hover:bg-indigo-50 rounded transition-colors"
+                          title="QR Code"
+                        >
+                          <QrCode className="h-4 w-4" />
                         </button>
                       </div>
                     </td>
@@ -542,6 +581,13 @@ function Products() {
             <div className="p-6">
               <form onSubmit={(e) => { e.preventDefault(); handleEditProduct(); }} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <button 
+                          onClick={() => openQRModal(product)}
+                          className="text-indigo-600 hover:text-indigo-900 p-1 hover:bg-indigo-50 rounded transition-colors"
+                          title="QR Code"
+                        >
+                          <QrCode className="h-4 w-4" />
+                        </button>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Product Name *</label>
                     <input
@@ -751,14 +797,14 @@ function Products() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-500 mb-1">Price</label>
-                    <p className="text-lg font-semibold text-gray-900">${selectedProduct.price}</p>
+                    <p className="text-lg font-semibold text-gray-900">₹{selectedProduct.price}</p>
                   </div>
                 </div>
                 
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-500 mb-1">Cost</label>
-                    <p className="text-lg font-semibold text-gray-900">${selectedProduct.cost}</p>
+                    <p className="text-lg font-semibold text-gray-900">₹{selectedProduct.cost}</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-500 mb-1">SKU</label>
@@ -785,6 +831,29 @@ function Products() {
                   <p className="text-gray-900">{selectedProduct.description}</p>
                 </div>
               )}
+
+              {/* QR Code Section */}
+              <div className="mt-6 pt-4 border-t border-gray-200">
+                <label className="block text-sm font-medium text-gray-500 mb-3">Item QR Code</label>
+                <div className="flex flex-col items-center gap-3">
+                  {selectedProduct.qrCode ? (
+                    <>
+                      <img src={selectedProduct.qrCode} alt="QR" className="w-40 h-40 object-contain border rounded-md p-2 bg-white" />
+                      <button
+                        onClick={() => {
+                          const a = document.createElement('a');
+                          a.href = selectedProduct.qrCode;
+                          a.download = `${selectedProduct.name || 'item'}-qr.png`;
+                          a.click();
+                        }}
+                        className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                      >Download QR</button>
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-500">QR code not available (added before QR feature). Re-save item to generate.</p>
+                  )}
+                </div>
+              </div>
               
               <div className="mt-6 pt-4 border-t border-gray-200">
                 <button
@@ -794,6 +863,55 @@ function Products() {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* QR Modal */}
+      {showQRModal && qrModalProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+            <div className="flex items-center justify-between px-5 py-3 border-b">
+              <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2"><QrCode className="h-5 w-5"/> QR Code</h3>
+              <button onClick={() => { setShowQRModal(false); setQrModalProduct(null); }} className="p-1 rounded hover:bg-gray-100"><X className="h-5 w-5"/></button>
+            </div>
+            <div className="p-6 flex flex-col items-center gap-4">
+              <div className="text-center">
+                <p className="text-sm font-medium text-gray-700 truncate max-w-[220px]" title={qrModalProduct.name}>{qrModalProduct.name}</p>
+                <p className="text-xs text-gray-500">SKU: {qrModalProduct.sku || 'N/A'}</p>
+              </div>
+              {qrModalProduct.qrCode ? (
+                <img src={qrModalProduct.qrCode} alt="QR Code" className="w-56 h-56 object-contain border rounded-lg p-2 bg-white" />
+              ) : (
+                <div className="w-56 h-56 flex items-center justify-center border rounded-lg bg-gray-50">
+                  <span className="text-xs text-gray-500">{qrGenerating ? 'Generating...' : 'No QR yet'}</span>
+                </div>
+              )}
+              <div className="flex w-full gap-2">
+                {!qrModalProduct.qrCode && (
+                  <button
+                    onClick={() => generateQR(qrModalProduct)}
+                    disabled={qrGenerating}
+                    className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm"
+                  >{qrGenerating ? 'Generating...' : 'Generate'}</button>
+                )}
+                {qrModalProduct.qrCode && (
+                  <button
+                    onClick={() => {
+                      const a = document.createElement('a');
+                      a.href = qrModalProduct.qrCode;
+                      a.download = `${qrModalProduct.name || 'item'}-qr.png`;
+                      a.click();
+                    }}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                  >Download</button>
+                )}
+                <button
+                  onClick={() => { setShowQRModal(false); setQrModalProduct(null); }}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 text-sm"
+                >Close</button>
+              </div>
+              <p className="text-[10px] text-gray-400 text-center">QR encodes a JSON payload with product id for quick lookup.</p>
             </div>
           </div>
         </div>

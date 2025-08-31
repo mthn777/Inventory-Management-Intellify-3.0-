@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { QrCode, ScanLine } from 'lucide-react';
+import { QrScanner } from '@yudiel/react-qr-scanner';
 import {
   Menu,
   X,
@@ -11,9 +13,8 @@ import {
   BarChart3,
   Users,
   FileText,
-  Calendar,
   TrendingUp,
-  DollarSign,
+  Banknote,
   Package,
   Activity,
   ChevronDown,
@@ -29,7 +30,7 @@ import {
 } from 'lucide-react';
 import { recordSale, fetchAllSales, subscribeAllSales, groupSalesByDateWithRevenue, rankTopProducts } from './Services/salesService';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { collection, getDocs, deleteDoc, doc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, deleteDoc, doc, updateDoc, onSnapshot, writeBatch } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 import Analytics from './Analytics';
 import Products from './Products';
@@ -67,6 +68,7 @@ function Dashboard({ onLogout, userData }) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
+  const [showQRScanner, setShowQRScanner] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showSellModal, setShowSellModal] = useState(false);
   const [sellData, setSellData] = useState({ units: '', pricePerUnit: '' });
@@ -78,6 +80,13 @@ function Dashboard({ onLogout, userData }) {
   const [stockAlerts, setStockAlerts] = useState([]); // { id, productId, name, level, type, ts }
   const lastAlertRef = useRef({});
   const lastEmailRef = useRef({});
+  const [showNotifications, setShowNotifications] = useState(false);
+  // General (non-stock) notifications
+  const [uiNotifications, setUiNotifications] = useState([]); // {id, message, level, ts}
+
+  const pushNote = (message, level='info') => {
+    setUiNotifications(n => [{ id: Date.now() + '_' + Math.random().toString(36).slice(2), message, level, ts: Date.now() }, ...n].slice(0, 12));
+  };
 
   // Form state for adding new item
   const [newItem, setNewItem] = useState({
@@ -177,12 +186,13 @@ function Dashboard({ onLogout, userData }) {
           description: doc.data().description,
           additionalInfo: doc.data().additionalInfo,
           createdAt: doc.data().createdAt
+          , qrCode: doc.data().qrCode || null
         });
       });
       setProducts(productsData);
     } catch (error) {
       console.error("Error fetching products: ", error);
-      alert("Failed to fetch products!");
+  pushNote('Failed to fetch products', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -205,6 +215,32 @@ function Dashboard({ onLogout, userData }) {
     setShowViewModal(true);
   };
 
+  const handleScanResult = (result, error) => {
+    if (!!result) {
+      try {
+        const text = result?.text || '';
+        const payload = JSON.parse(text);
+        if (payload.type === 'inventory_item' && payload.id) {
+          const found = products.find(p => p.id === payload.id);
+          if (found) {
+            setShowQRScanner(false);
+            handleViewProduct(found);
+          } else {
+            pushNote('Item not found for scanned code','warn');
+          }
+        } else {
+          pushNote('Invalid QR code','warn');
+        }
+      } catch (e) {
+        pushNote('Failed to parse QR','error');
+      }
+    }
+    if (error) {
+      // non-fatal; log silently
+      // console.log(error);
+    }
+  };
+
   // Handle edit product
   const handleEditProduct = (product) => {
     setSelectedProduct(product);
@@ -223,22 +259,21 @@ function Dashboard({ onLogout, userData }) {
     const units = Number(sellData.units);
     const pricePerUnit = Number(sellData.pricePerUnit || 0);
     if (!units || units <= 0) {
-      alert('Enter valid units');
+  pushNote('Enter valid units', 'warn');
       return;
     }
     if (units > selectedProduct.stockLevel) {
-      alert('Cannot sell more than stock level');
+  pushNote('Cannot sell more than stock level', 'warn');
       return;
     }
     try {
       await recordSale({ productId: selectedProduct.id, units, pricePerUnit });
       // Update local state
       setProducts(products.map(p => p.id === selectedProduct.id ? { ...p, stockLevel: p.stockLevel - units, status: (p.stockLevel - units) > 20 ? 'In Stock' : (p.stockLevel - units) > 0 ? 'Low Stock' : 'Out of Stock' } : p));
-      setShowSellModal(false);
-      alert('Sale recorded');
+  setShowSellModal(false);
     } catch (err) {
       console.error(err);
-      alert('Failed to record sale');
+  pushNote('Failed to record sale', 'error');
     }
   };
 
@@ -248,18 +283,29 @@ function Dashboard({ onLogout, userData }) {
       try {
         await deleteDoc(doc(db, "inventory", product.id));
         setProducts(products.filter(p => p.id !== product.id));
-        alert('Product deleted successfully!');
+  pushNote('Product deleted', 'success');
       } catch (error) {
         console.error("Error deleting product: ", error);
-        alert("Failed to delete product!");
+  pushNote('Failed to delete product', 'error');
       }
     }
   };
 
   // Handle updating product
   const handleUpdateProduct = async () => {
-    if (!selectedProduct.name || !selectedProduct.stockLevel || !selectedProduct.expiryDate) {
-      alert('Please fill in all required fields');
+    if (!selectedProduct.name || selectedProduct.stockLevel === '' || selectedProduct.stockLevel == null || !selectedProduct.expiryDate) {
+  pushNote('Fill all required fields', 'warn');
+      return;
+    }
+
+    const priceNum = Number(selectedProduct.price);
+    const sellNum = selectedProduct.sellingPrice === '' || selectedProduct.sellingPrice == null ? priceNum : Number(selectedProduct.sellingPrice);
+    if (Number.isNaN(priceNum) || priceNum < 0) {
+      pushNote('Price must be a valid non-negative number', 'warn');
+      return;
+    }
+    if (Number.isNaN(sellNum) || sellNum < 0) {
+      pushNote('Selling Price must be a valid non-negative number', 'warn');
       return;
     }
 
@@ -275,7 +321,8 @@ function Dashboard({ onLogout, userData }) {
         quantity: selectedProduct.quantity,
         unitOfMeasure: selectedProduct.unitOfMeasure,
         description: selectedProduct.description,
-        price: Number(selectedProduct.price),
+        price: priceNum,
+        sellingPrice: sellNum,
         additionalInfo: selectedProduct.additionalInfo,
         updatedAt: new Date()
       });
@@ -286,17 +333,17 @@ function Dashboard({ onLogout, userData }) {
 
       setShowEditModal(false);
       setSelectedProduct(null);
-      alert('Product updated successfully!');
+  pushNote('Product updated', 'success');
     } catch (error) {
       console.error("Error updating product: ", error);
-      alert("Failed to update product!");
+  pushNote('Failed to update product', 'error');
     }
   };
 
   // Handle adding new item
   const handleAddItem = (formData) => {
     if (!formData.productName || !formData.sku || !formData.stockLevel || !formData.expiryDate || !formData.price) {
-      alert('Please fill in all required fields');
+  pushNote('Fill all required fields', 'warn');
       return;
     }
 
@@ -341,11 +388,11 @@ function Dashboard({ onLogout, userData }) {
     setShowAddItemModal(false);
 
     // Show success message
-    alert(`Product "${itemToAdd.name}" added successfully! The product is now visible in the products table.`);
+  pushNote(`Product "${itemToAdd.name}" added`, 'success');
   };
 
   const [stats, setStats] = useState([
-    { key: 'revenue', title: 'Total Revenue', value: '$0', change: '', icon: DollarSign, color: 'text-green-600', bgColor: 'bg-green-100' },
+    { key: 'revenue', title: 'Total Revenue', value: '₹0', change: '', icon: Banknote, color: 'text-green-600', bgColor: 'bg-green-100' },
     { key: 'orders', title: 'Total Orders', value: '0', change: '', icon: Users, color: 'text-blue-600', bgColor: 'bg-blue-100' },
     { key: 'sold', title: 'Products Sold', value: '0', change: '', icon: TrendingUp, color: 'text-purple-600', bgColor: 'bg-purple-100' },
     { key: 'active', title: 'Active Products', value: '0', change: '', icon: Package, color: 'text-orange-600', bgColor: 'bg-orange-100' }
@@ -354,6 +401,9 @@ function Dashboard({ onLogout, userData }) {
   const [allSales, setAllSales] = useState([]); // real-time sales slice
   const [revenueSeries, setRevenueSeries] = useState([]);
   const [topProducts, setTopProducts] = useState([]);
+  // Reports configuration
+  const [reportLeadTime, setReportLeadTime] = useState(7); // days
+  const [reportTargetDays, setReportTargetDays] = useState(30);
   // email alert sender (throttled per product+level 5 min)
   const sendLowStockEmail = (alertObj) => {
     const key = alertObj.productId + '_' + alertObj.level;
@@ -404,6 +454,69 @@ function Dashboard({ onLogout, userData }) {
     setTopProducts(rankTopProducts(allSales, productsMap, 5));
   }, [allSales, products]);
 
+  // One-time electronics dataset seeding for richer demo / AI training
+  // Disabled automatic demo seeding to prevent unwanted items appearing after reload.
+  // If demo data is needed, use the explicit "Seed Electronics Demo" button in the maintenance actions below.
+  // (Original auto-seed code removed per user request.)
+
+  // Reset (purge) all sales data so revenue/statistics start fresh
+  const [resetting, setResetting] = useState(false);
+  const handleResetData = async () => {
+    if (resetting) return;
+    if (!resetArm) {
+      setResetArm(true);
+      pushNote('Tap Reset Sales Data again within 8s to confirm purge', 'warn');
+      setTimeout(()=> setResetArm(false), 8000);
+      return;
+    }
+    setResetting(true);
+    try {
+      const svc = await import('./Services/salesService');
+      await svc.purgeAllSalesData();
+      setAllSales([]);
+      setRevenueSeries([]);
+      setTopProducts([]);
+      setStats(prev => prev.map(c => c.key === 'revenue' ? { ...c, value: '₹0', change: '' } : c));
+      pushNote('Sales data cleared', 'success');
+    } catch (e) {
+      console.error('Reset failed', e);
+      pushNote('Reset failed: ' + (e.message || 'unknown'), 'error');
+    } finally {
+      setResetting(false);
+      setResetArm(false);
+    }
+  };
+
+  const [reseeding, setReseeding] = useState(false);
+  const [resetArm, setResetArm] = useState(false);
+  const [diversifyArm, setDiversifyArm] = useState(false);
+  const [seedElectronicsArm, setSeedElectronicsArm] = useState(false);
+  const [seedingElectronics, setSeedingElectronics] = useState(false);
+  const [removeDemoArm, setRemoveDemoArm] = useState(false);
+  const [removingDemo, setRemovingDemo] = useState(false);
+  const handleDiversifiedReseed = async () => {
+    if (reseeding) return;
+    if (!diversifyArm) {
+      setDiversifyArm(true);
+      pushNote('Tap Diversified Reseed again within 8s to confirm purge & reseed', 'warn');
+      setTimeout(()=> setDiversifyArm(false), 8000);
+      return;
+    }
+    setReseeding(true);
+    try {
+      const svc = await import('./Services/salesService');
+      await svc.purgeAllSalesData();
+      const res = await svc.diversifySalesHistory({ days: 70, maxUnits: 60 });
+      console.log('Diversified reseed result', res);
+      pushNote('Diversified sales history generated', 'success');
+    } catch (e) {
+      console.error('Diversified reseed failed', e);
+      pushNote('Diversified reseed failed: ' + (e.message || 'unknown'), 'error');
+    } finally {
+      setReseeding(false);
+    }
+  };
+
   const recentActivities = [
     { user: 'John Doe', action: 'restocked', product: 'Fresh Organic Bananas', time: '2 hours ago', avatar: 'JD' },
     { user: 'Sarah Wilson', action: 'added new product', product: 'Whole Grain Bread', time: '4 hours ago', avatar: 'SW' },
@@ -437,7 +550,7 @@ function Dashboard({ onLogout, userData }) {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (e) {
-      alert('Failed to generate report');
+  pushNote('Failed to generate report', 'error');
       console.error(e);
     }
   };
@@ -463,23 +576,7 @@ function Dashboard({ onLogout, userData }) {
 
   return (
     <>
-    {/* Floating Low Stock Alerts */}
-    <div className="fixed top-20 right-4 z-50 space-y-2 w-64">
-      {stockAlerts.map(alert => (
-        <div key={alert.id} className={`flex items-start gap-2 p-2 rounded-md shadow text-xs border bg-white ${alert.type==='out' ? 'border-red-300' : 'border-amber-300'}`}>
-          <div className={`p-1 rounded ${alert.type==='out' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
-            <AlertTriangle className="w-4 h-4" />
-          </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold truncate" title={alert.name}>{alert.name}</div>
-              <div className="text-gray-600">{alert.type==='out' ? 'Out of Stock' : `Low Stock: ${alert.level}`}</div>
-            </div>
-            <button onClick={() => setStockAlerts(a => a.filter(x => x.id !== alert.id))} className="text-gray-400 hover:text-gray-600">
-              <X className="w-3 h-3" />
-            </button>
-        </div>
-      ))}
-    </div>
+  {/* Floating low stock alerts removed per user request; alerts now only visible inside notifications dropdown */}
     <div className="min-h-screen bg-gray-50">
       {/* Top Navigation */}
       <nav className="bg-white shadow-sm border-b border-gray-200 fixed top-0 left-0 right-0 z-40">
@@ -536,7 +633,7 @@ function Dashboard({ onLogout, userData }) {
                           }}
                         >
                           <div className="font-medium text-gray-900">{product.name}</div>
-                          <div className="text-xs text-gray-500">{product.sku || 'N/A'} | {product.category} | {product.status} | Stock: {product.stockLevel} | ${product.price ? product.price.toFixed(2) : 'N/A'}</div>
+                          <div className="text-xs text-gray-500">{product.sku || 'N/A'} | {product.category} | {product.status} | Stock: {product.stockLevel} | ₹{product.price ? product.price.toFixed(2) : 'N/A'}</div>
                         </button>
                       ))
                     ) : (
@@ -549,10 +646,65 @@ function Dashboard({ onLogout, userData }) {
               </div>
 
               {/* Notifications */}
-              <button className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 relative">
-                <Bell className="h-5 w-5 sm:h-6 sm:w-6" />
-                <span className="absolute top-1 right-1 block h-2 w-2 rounded-full bg-red-400"></span>
-              </button>
+              {/* QR Scan */}
+              <div>
+                <button
+                  onClick={() => setShowQRScanner(true)}
+                  className="p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                  title="Scan Item QR"
+                >
+                  <QrCode className="h-5 w-5 sm:h-6 sm:w-6" />
+                </button>
+              </div>
+              {/* Notifications */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotifications(v => !v)}
+                  className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 relative"
+                  title="Notifications"
+                >
+                  <Bell className="h-5 w-5 sm:h-6 sm:w-6" />
+                  {(stockAlerts.length + uiNotifications.length) > 0 && <span className="absolute top-1 right-1 block h-2 w-2 rounded-full bg-red-500 animate-pulse"></span>}
+                </button>
+                {showNotifications && (
+                  <div className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-white rounded-lg shadow-xl border border-gray-200 z-20 overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50">
+                      <span className="text-sm font-semibold text-gray-700">Notifications</span>
+                      <button onClick={() => { setStockAlerts([]); setUiNotifications([]); }} className="text-xs text-blue-600 hover:underline">Clear All</button>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                      {(stockAlerts.length + uiNotifications.length) === 0 && (
+                        <div className="p-4 text-xs text-gray-500">No notifications.</div>
+                      )}
+                      {uiNotifications.map(n => (
+                        <div key={n.id} className="p-3 text-xs flex items-start gap-2 hover:bg-gray-50">
+                          <span className={`mt-0.5 h-2 w-2 rounded-full ${n.level==='error' ? 'bg-red-600' : n.level==='warn' ? 'bg-amber-500' : n.level==='success' ? 'bg-emerald-600' : 'bg-blue-500'}`}></span>
+                          <div className="flex-1">
+                            <div className="text-gray-800 break-words">{n.message}</div>
+                            <div className="text-[10px] text-gray-400 mt-0.5">{new Date(n.ts).toLocaleTimeString()}</div>
+                          </div>
+                          <button onClick={() => setUiNotifications(lst => lst.filter(x => x.id !== n.id))} className="text-gray-300 hover:text-gray-500">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                      {stockAlerts.map(a => (
+                        <div key={a.id} className="p-3 text-xs flex items-start gap-2 hover:bg-gray-50">
+                          <span className={`mt-0.5 h-2 w-2 rounded-full ${a.type === 'out' ? 'bg-red-600' : 'bg-amber-500'}`}></span>
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-800 truncate">{a.name}</div>
+                            <div className="text-gray-600">{a.type === 'out' ? 'Out of stock' : 'Low stock'} (Level: {a.level})</div>
+                            <div className="text-[10px] text-gray-400 mt-0.5">{new Date(a.ts).toLocaleTimeString()}</div>
+                          </div>
+                          <button onClick={() => setStockAlerts(lst => lst.filter(x => x.id !== a.id))} className="text-gray-300 hover:text-gray-500">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* User Menu */}
               <div className="relative" ref={userMenuRef}>
@@ -608,7 +760,6 @@ function Dashboard({ onLogout, userData }) {
                 { id: 'products', label: 'Products', icon: Package },
                 { id: 'team', label: 'Team', icon: Users },
                 { id: 'reports', label: 'Reports', icon: FileText },
-                { id: 'calendar', label: 'Calendar', icon: Calendar },
                 { id: 'settings', label: 'Settings', icon: Settings }
               ].map((item) => (
                 <button
@@ -671,6 +822,75 @@ function Dashboard({ onLogout, userData }) {
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* Data Maintenance Actions */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={handleResetData}
+                  disabled={resetting}
+                  className="px-4 py-2 rounded-lg text-sm font-medium border border-red-300 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50"
+                  title="Delete all sales history (keeps products)"
+                >{resetting ? 'Resetting…' : 'Reset Sales Data'}</button>
+                <button
+                  onClick={handleDiversifiedReseed}
+                  disabled={reseeding}
+                  className="px-4 py-2 rounded-lg text-sm font-medium border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50"
+                  title="Purge & generate diverse synthetic history for better AI variation"
+                >{reseeding ? 'Generating…' : 'Diversified Reseed'}</button>
+                <button
+                  onClick={async () => {
+                    if (seedingElectronics) return;
+                    if (!seedElectronicsArm) {
+                      setSeedElectronicsArm(true);
+                      pushNote('Tap Seed Electronics Demo again within 8s to confirm seeding', 'warn');
+                      setTimeout(()=> setSeedElectronicsArm(false), 8000);
+                      return;
+                    }
+                    setSeedingElectronics(true);
+                    try {
+                      const svc = await import('./Services/salesService');
+                      const res = await svc.seedElectronicsInventoryAndSales({ days: 90 });
+                      pushNote(`Electronics demo seeded. Created: ${res.created}`, 'success');
+                    } catch (e) { pushNote('Electronics seed failed: ' + (e.message||'unknown'), 'error'); }
+                    finally { setSeedingElectronics(false); setSeedElectronicsArm(false); }
+                  }}
+                  disabled={seedingElectronics}
+                  className="px-4 py-2 rounded-lg text-sm font-medium border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-50"
+                  title="Seed electronics demo catalog (manual trigger)"
+                >{seedingElectronics ? 'Seeding…' : 'Seed Electronics Demo'}</button>
+                <button
+                  onClick={async () => {
+                    if (removingDemo) return;
+                    if (!removeDemoArm) {
+                      setRemoveDemoArm(true);
+                      pushNote('Tap Remove Demo Items again within 8s to confirm deletion', 'warn');
+                      setTimeout(()=> setRemoveDemoArm(false), 8000);
+                      return;
+                    }
+                    setRemovingDemo(true);
+                    try {
+                      const svc = await import('./Services/salesService');
+                      const res = await svc.purgeDemoInventory();
+                      pushNote(`Removed demo items: ${res.deleted}`, 'success');
+                    } catch (e) { pushNote('Remove demo items failed: ' + (e.message||'unknown'), 'error'); }
+                    finally { setRemovingDemo(false); setRemoveDemoArm(false); }
+                  }}
+                  disabled={removingDemo}
+                  className="px-4 py-2 rounded-lg text-sm font-medium border border-rose-300 text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-50"
+                  title="Delete previously seeded demo inventory items"
+                >{removingDemo ? 'Removing…' : 'Remove Demo Items'}</button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const svc = await import('./Services/salesService');
+                      const res = await svc.addAIDemoItemsAndSales({ days: 70 });
+                      pushNote(`AI demo items processed. New: ${res.created}, sales: ${res.salesInserted}`, 'success');
+                    } catch (e) { pushNote('AI demo seeding failed: ' + (e.message||'unknown'), 'error'); }
+                  }}
+                  className="px-4 py-2 rounded-lg text-sm font-medium border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
+                  title="Add curated items with distinct demand patterns for varied AI suggestions"
+                >Add AI Demo Items</button>
               </div>
 
               {/* Charts and Activity Row */}
@@ -805,7 +1025,7 @@ function Dashboard({ onLogout, userData }) {
                                 </span>
                               </div>
                               <div className="text-xs text-gray-500 mt-1">
-                                SKU: {product.sku || 'N/A'} | Price: ${product.price ? product.price.toFixed(2) : 'N/A'}
+                                SKU: {product.sku || 'N/A'} | Price: ₹{product.price ? product.price.toFixed(2) : 'N/A'}
                               </div>
                             </div>
                             <div className="flex items-center space-x-1 ml-2">
@@ -913,7 +1133,7 @@ function Dashboard({ onLogout, userData }) {
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="text-sm font-medium text-gray-900">
-                                ${product.price ? product.price.toFixed(2) : 'N/A'}
+                                ₹{product.price ? product.price.toFixed(2) : 'N/A'}
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatDate(product.expiryDate)}</td>
@@ -945,7 +1165,7 @@ function Dashboard({ onLogout, userData }) {
                                   className="text-emerald-600 hover:text-emerald-900 p-1 hover:bg-emerald-50 rounded transition-colors"
                                   title="Record Sale"
                                 >
-                                  $<span className="sr-only">Sell</span>
+                                  ₹<span className="sr-only">Sell</span>
                                 </button>
                               </div>
                             </td>
@@ -982,26 +1202,224 @@ function Dashboard({ onLogout, userData }) {
           )}
 
           {activeTab === 'reports' && (
-            <div className="text-center py-8 sm:py-12">
-              <FileText className="h-8 w-8 sm:h-12 sm:w-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">Reports & Documents</h3>
-              <p className="text-gray-500 text-sm sm:text-base">Generate and view various reports and documents.</p>
+            <div className="space-y-8">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 rounded-xl bg-blue-50 text-blue-600"><FileText className="h-6 w-6" /></div>
+                  <div>
+                    <h3 className="text-xl font-semibold text-gray-900">Inventory & Sales Report</h3>
+                    <p className="text-sm text-gray-500">Real-time snapshot (last {salesRangeDays} days sales window)</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3 items-end">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Lead Time (days)</label>
+                    <input type="number" min={1} max={60} value={reportLeadTime} onChange={e=>setReportLeadTime(Number(e.target.value)||7)} className="w-24 px-2 py-1 border rounded" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Target Coverage (days)</label>
+                    <input type="number" min={7} max={120} value={reportTargetDays} onChange={e=>setReportTargetDays(Number(e.target.value)||30)} className="w-28 px-2 py-1 border rounded" />
+                  </div>
+                  <button onClick={generateReport} className="h-9 px-4 rounded-md bg-white border text-sm font-medium flex items-center gap-2 hover:bg-gray-50">
+                    <Download className="w-4 h-4" /> CSV Sales
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Export reorder recommendations
+                      try {
+                        const recs = window.__latestReorderRecs || [];
+                        const header = ['Product','AvgDaily','Stock','ReorderPoint','SuggestedOrder','DaysCover','LeadTime','TargetDays'];
+                        const esc = v => v==null?'' : /[",\n]/.test(String(v)) ? '"'+String(v).replace(/"/g,'""')+'"' : v;
+                        const rows = recs.map(r => [r.name,r.avgDaily,r.stockLevel,r.reorderPoint,r.suggestedOrderQty,r.daysCover,r.leadTime,r.targetDays]);
+                        const csv = [header.map(esc).join(','),...rows.map(r=>r.map(esc).join(','))].join('\n');
+                        const blob = new Blob([csv],{type:'text/csv'}); const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='reorder_recommendations_'+Date.now()+'.csv'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                        pushNote('Reorder recommendations exported','success');
+                      } catch(e){ console.error(e); pushNote('Export failed','error'); }
+                    }}
+                    className="h-9 px-4 rounded-md bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+                  >Export Reorders</button>
+                </div>
+              </div>
+
+              {(() => {
+                // Compute executive & inventory metrics
+                const productsMap = new Map(products.map(p=>[p.id,p]));
+                let totalRevenue = 0, totalUnits = 0, costSold = 0, profit = 0, marginUnits = 0;
+                allSales.forEach(s => {
+                  const prod = productsMap.get(s.productId);
+                  const cost = prod ? (prod.price||0) : 0;
+                  const sell = s.pricePerUnit || (prod ? (prod.sellingPrice||prod.price||0):0);
+                  const units = Number(s.units||0);
+                  totalUnits += units; totalRevenue += sell*units; costSold += cost*units; profit += (sell-cost)*units; if (sell>0) marginUnits += (sell-cost)/sell * units;
+                });
+                const avgMarginPct = totalUnits ? (marginUnits/totalUnits*100) : 0;
+                const stockValuation = products.reduce((a,p)=> a + (Number(p.stockLevel||0) * Number(p.price||0)), 0);
+                const inventoryTurnover = stockValuation ? (costSold / stockValuation) : 0;
+                const dailyCost = salesRangeDays ? costSold / salesRangeDays : 0;
+                const daysOfInventory = dailyCost ? (stockValuation / dailyCost) : null;
+                return (
+                  <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-4">
+                    {[{title:'Revenue',value:'₹'+totalRevenue.toFixed(2)},{title:'Gross Profit',value:'₹'+profit.toFixed(2)},{title:'Avg Margin %',value:avgMarginPct.toFixed(1)+'%'},{title:'Units Sold',value:totalUnits},{title:'Stock Valuation',value:'₹'+stockValuation.toFixed(2)},{title:'Inv Turnover',value:inventoryTurnover.toFixed(2)},{title:'Days Inventory',value: daysOfInventory? daysOfInventory.toFixed(1):'—'},{title:'Active SKUs',value:products.length}].map((c,i)=>(
+                      <div key={i} className="bg-white rounded-lg border p-4 shadow-sm">
+                        <p className="text-xs font-medium text-gray-500 tracking-wide">{c.title}</p>
+                        <p className="mt-2 text-lg font-semibold text-gray-900">{c.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {(() => {
+                // Demand calculations per product for recommendations
+                const dayMap = new Map(); // productId -> { dates: {date: units}, totalUnits }
+                allSales.forEach(s => {
+                  if (!dayMap.has(s.productId)) dayMap.set(s.productId,{days:{}, total:0});
+                  const rec = dayMap.get(s.productId);
+                  rec.days[s.date] = (rec.days[s.date]||0) + Number(s.units||0);
+                  rec.total += Number(s.units||0);
+                });
+                const lowList = []; const overList = [];
+                const recommendations = [];
+                const target = reportTargetDays;
+                products.forEach(p => {
+                  const rec = dayMap.get(p.id);
+                  const days = rec? Object.values(rec.days):[];
+                  const nDays = salesRangeDays || 1;
+                  const avgDaily = rec? (rec.total / nDays):0;
+                  const mean = avgDaily;
+                  let variance = 0; if (days.length){ const m = days.reduce((a,b)=>a+b,0)/days.length; variance = days.reduce((a,b)=> a + Math.pow(b-m,2),0)/days.length; }
+                  const stdDaily = Math.sqrt(variance);
+                  const lead = reportLeadTime;
+                  const safety = +(1.65 * stdDaily * Math.sqrt(lead)).toFixed(2);
+                  const reorderPoint = +(avgDaily * lead + safety).toFixed(2);
+                  const stock = Number(p.stockLevel||0);
+                  const daysCover = avgDaily? +(stock / avgDaily).toFixed(1) : (stock>0? '∞':'0');
+                  if (stock <= lowStockThreshold) lowList.push({name:p.name, stock});
+                  if (typeof daysCover==='number' && daysCover > target*2) overList.push({name:p.name, stock, daysCover});
+                  if (avgDaily>0){
+                    const suggestedOrderQty = stock < reorderPoint ? Math.max(0, Math.ceil(target*avgDaily - stock)) : 0;
+                    recommendations.push({
+                      id:p.id,
+                      name:p.name,
+                      avgDaily:+avgDaily.toFixed(2),
+                      stockLevel:stock,
+                      reorderPoint,
+                      safetyStock:safety,
+                      suggestedOrderQty,
+                      daysCover,
+                      leadTime:lead,
+                      targetDays:target
+                    });
+                  }
+                });
+                // store latest recommendations globally for export button access
+                window.__latestReorderRecs = recommendations;
+                return (
+                  <div className="space-y-10">
+                    <section>
+                      <h4 className="text-lg font-semibold text-gray-900 mb-3">Low Stock (≤ {lowStockThreshold})</h4>
+                      {lowList.length? (
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {lowList.sort((a,b)=>a.stock-b.stock).map(l => (
+                            <div key={l.name} className="border rounded-md p-3 bg-white flex items-center justify-between text-sm">
+                              <span className="truncate" title={l.name}>{l.name}</span>
+                              <span className={`font-semibold ${l.stock===0?'text-red-600':'text-amber-600'}`}>{l.stock}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : <p className="text-sm text-gray-500">No items currently below threshold.</p>}
+                    </section>
+                    <section>
+                      <h4 className="text-lg font-semibold text-gray-900 mb-3">Overstock (days cover &gt; {target*2})</h4>
+                      {overList.length? (
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full text-xs border bg-white">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-2 py-1 border">Product</th><th className="px-2 py-1 border">Stock</th><th className="px-2 py-1 border">Days Cover</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {overList.sort((a,b)=> b.daysCover - a.daysCover).map(o => (
+                                <tr key={o.name} className="odd:bg-white even:bg-gray-50">
+                                  <td className="px-2 py-1 border truncate max-w-[160px]" title={o.name}>{o.name}</td>
+                                  <td className="px-2 py-1 border">{o.stock}</td>
+                                  <td className="px-2 py-1 border">{o.daysCover}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : <p className="text-sm text-gray-500">No significant overstock detected.</p>}
+                    </section>
+                    <section>
+                      <h4 className="text-lg font-semibold text-gray-900 mb-3">Reorder Recommendations</h4>
+                      {recommendations.length? (
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full text-[11px] border bg-white">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-2 py-1 border">Product</th>
+                                <th className="px-2 py-1 border">Avg Daily</th>
+                                <th className="px-2 py-1 border">Stock</th>
+                                <th className="px-2 py-1 border">Days Cover</th>
+                                <th className="px-2 py-1 border">Safety</th>
+                                <th className="px-2 py-1 border">Reorder Pt</th>
+                                <th className="px-2 py-1 border">Suggest Qty</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {recommendations.sort((a,b)=> (b.suggestedOrderQty||0)-(a.suggestedOrderQty||0)).map(r => (
+                                <tr key={r.id} className="odd:bg-white even:bg-gray-50">
+                                  <td className="px-2 py-1 border truncate max-w-[160px]" title={r.name}>{r.name}</td>
+                                  <td className="px-2 py-1 border">{r.avgDaily}</td>
+                                  <td className={`px-2 py-1 border ${r.stockLevel < r.reorderPoint? 'text-amber-600 font-semibold':''}`}>{r.stockLevel}</td>
+                                  <td className="px-2 py-1 border">{r.daysCover}</td>
+                                  <td className="px-2 py-1 border">{r.safetyStock}</td>
+                                  <td className="px-2 py-1 border">{r.reorderPoint}</td>
+                                  <td className={`px-2 py-1 border ${r.suggestedOrderQty>0?'text-emerald-700 font-semibold':'text-gray-400'}`}>{r.suggestedOrderQty||0}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <p className="text-[10px] text-gray-500 mt-2">Formula: Reorder Point = AvgDaily * LeadTime + 1.65 * StdDaily * √LeadTime. Suggested Qty aims for target {target} days cover.</p>
+                        </div>
+                      ) : <p className="text-sm text-gray-500">No demand data yet to generate recommendations.</p>}
+                    </section>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
-          {activeTab === 'calendar' && (
-            <div className="text-center py-8 sm:py-12">
-              <Calendar className="h-8 w-8 sm:h-12 sm:w-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">Calendar & Events</h3>
-              <p className="text-gray-500 text-sm sm:text-base">Schedule and manage your events and meetings.</p>
-            </div>
-          )}
 
           {activeTab === 'settings' && (
             <div className="text-center py-8 sm:py-12">
               <Settings className="h-8 w-8 sm:h-12 sm:w-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">Settings & Preferences</h3>
               <p className="text-gray-500 text-sm sm:text-base">Configure your account settings and preferences.</p>
+            </div>
+          )}
+
+          {/* QR Scanner Modal */}
+          {showQRScanner && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-60">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b">
+                  <h4 className="font-semibold text-gray-800 flex items-center gap-2"><ScanLine className="h-5 w-5"/> Scan Item QR</h4>
+                  <button onClick={() => setShowQRScanner(false)} className="p-2 rounded hover:bg-gray-100"><X className="h-5 w-5"/></button>
+                </div>
+                <div className="p-4 space-y-4">
+                  <QrScanner
+                    onDecode={(result) => result && handleScanResult({ text: result }, null)}
+                    onError={(err) => handleScanResult(null, err)}
+                    constraints={{ facingMode: 'environment' }}
+                    containerStyle={{ width: '100%' }}
+                    videoStyle={{ width: '100%', borderRadius: '0.75rem' }}
+                  />
+                  <p className="text-xs text-gray-500">Point the camera at an item QR code. It will open the product automatically once recognized.</p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1087,12 +1505,12 @@ function Dashboard({ onLogout, userData }) {
 
                        <div>
                          <label className="block text-sm font-medium text-gray-500 mb-1">Cost Price</label>
-                         <p className="text-base sm:text-lg font-semibold text-gray-900">${selectedProduct.price ? selectedProduct.price.toFixed(2) : 'N/A'}</p>
+                         <p className="text-base sm:text-lg font-semibold text-gray-900">₹{selectedProduct.price ? selectedProduct.price.toFixed(2) : 'N/A'}</p>
                        </div>
 
                        <div>
                          <label className="block text-sm font-medium text-gray-500 mb-1">Selling Price</label>
-                         <p className="text-base sm:text-lg font-semibold text-gray-900">${selectedProduct.sellingPrice ? selectedProduct.sellingPrice.toFixed(2) : 'N/A'}</p>
+                         <p className="text-base sm:text-lg font-semibold text-gray-900">₹{selectedProduct.sellingPrice ? selectedProduct.sellingPrice.toFixed(2) : 'N/A'}</p>
                        </div>
 
                        <div>
@@ -1174,11 +1592,15 @@ function Dashboard({ onLogout, userData }) {
                         Category *
                       </label>
                       <select
-                        value={selectedProduct.category}
+                        value={selectedProduct.category || ''}
                         onChange={(e) => setSelectedProduct({ ...selectedProduct, category: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                         required
                       >
+                        {/* Ensure current category appears even if not in default set */}
+                        {selectedProduct.category && !['Fruits','Vegetables','Dairy','Bakery','Meat','Grains','Beverages','Snacks','Electronics','Accessories','Audio','Computers','Wearables','Tablets','Networking','Gaming'].includes(selectedProduct.category) && (
+                          <option value={selectedProduct.category}>{selectedProduct.category}</option>
+                        )}
                         <option value="Fruits">Fruits</option>
                         <option value="Vegetables">Vegetables</option>
                         <option value="Dairy">Dairy</option>
@@ -1187,6 +1609,14 @@ function Dashboard({ onLogout, userData }) {
                         <option value="Grains">Grains</option>
                         <option value="Beverages">Beverages</option>
                         <option value="Snacks">Snacks</option>
+                        <option value="Electronics">Electronics</option>
+                        <option value="Accessories">Accessories</option>
+                        <option value="Audio">Audio</option>
+                        <option value="Computers">Computers</option>
+                        <option value="Wearables">Wearables</option>
+                        <option value="Tablets">Tablets</option>
+                        <option value="Networking">Networking</option>
+                        <option value="Gaming">Gaming</option>
                       </select>
                     </div>
 
@@ -1218,7 +1648,7 @@ function Dashboard({ onLogout, userData }) {
                       />
                     </div>
 
-                    {/* Status */}
+                    {/* Stats Grid + Reset */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         Status *
@@ -1249,6 +1679,21 @@ function Dashboard({ onLogout, userData }) {
                         min="0"
                         step="0.01"
                         required
+                      />
+                    </div>
+
+                    {/* Selling Price */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Selling Price (leave blank = same as Price)
+                      </label>
+                      <input
+                        type="number"
+                        value={selectedProduct.sellingPrice ?? ''}
+                        onChange={(e) => setSelectedProduct({ ...selectedProduct, sellingPrice: e.target.value === '' ? '' : parseFloat(e.target.value) })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                        min="0"
+                        step="0.01"
                       />
                     </div>
 

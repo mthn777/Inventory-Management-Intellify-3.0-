@@ -18,6 +18,9 @@ function Analytics() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkResults, setBulkResults] = useState([]); // [{productId, name, recommendation, forecastAvgNext7,...}]
+  const [leadTimeDays, setLeadTimeDays] = useState(7);
 
   const selectedProduct = useMemo(() => products.find(p => p.id === selectedId) || null, [products, selectedId]);
 
@@ -79,8 +82,13 @@ function Analytics() {
     if (!selectedProduct || !salesHistory.length) return;
     setRunning(true);
     setError('');
+    const normalize = (u) => {
+      if (!u) return null;
+      const trimmed = u.replace(/\/$/, '');
+      return /\/analyze$/i.test(trimmed) ? trimmed : trimmed + '/analyze';
+    };
     const endpoints = [
-      process.env.REACT_APP_AI_URL,
+      normalize(process.env.REACT_APP_AI_URL),
       'http://127.0.0.1:8010/analyze',
       'http://127.0.0.1:8000/analyze',
       'http://localhost:8010/analyze',
@@ -98,7 +106,9 @@ function Analytics() {
       productName: selectedProduct.productName || selectedProduct.name || 'Product',
       costPrice,
       sellingPrice,
-      salesHistory: salesHistory.map(s => ({ date: s.date, units: s.units }))
+      salesHistory: salesHistory.map(s => ({ date: s.date, units: s.units })),
+      stockLevel: Number(selectedProduct.stockLevel || 0),
+      assumedLeadTimeDays: Number(leadTimeDays || 7)
     };
     const payload = JSON.stringify(payloadObj);
 
@@ -146,8 +156,10 @@ function Analytics() {
 
   const testConnection = async () => {
     setError('');
+    const normalize = (u) => {
+      if (!u) return null; const t = u.replace(/\/$/, ''); return /\/analyze$/i.test(t) ? t : t + '/analyze'; };
     const urls = [
-      process.env.REACT_APP_AI_URL,
+      normalize(process.env.REACT_APP_AI_URL),
       'http://127.0.0.1:8010/analyze',
       'http://127.0.0.1:8000/analyze'
     ].filter(Boolean);
@@ -158,6 +170,58 @@ function Analytics() {
       } catch (e) { /* continue */ }
     }
     setError('AI service not reachable on any known URL.');
+  };
+
+  const runAIDemoAll = async () => {
+    setError('');
+    const patternProducts = products.filter(p => p.patternType);
+    if (!patternProducts.length) {
+      alert('No AI demo pattern items found. Use Dashboard -> Add AI Demo Items first.');
+      return;
+    }
+    setBulkRunning(true);
+    setBulkResults([]);
+    const normalize = (u) => {
+      if (!u) return null; const t = u.replace(/\/$/, ''); return /\/analyze$/i.test(t) ? t : t + '/analyze'; };
+    const endpoints = [
+      normalize(process.env.REACT_APP_AI_URL),
+      'http://127.0.0.1:8010/analyze',
+      'http://127.0.0.1:8000/analyze',
+      'http://localhost:8010/analyze',
+      'http://localhost:8000/analyze'
+    ].filter(Boolean);
+    const chosenEndpoint = endpoints[0];
+    const results = [];
+    for (const p of patternProducts) {
+      try {
+        const rows = await fetchSalesForProduct(p.id, { days: 90 });
+        const daily = aggregateDaily(rows);
+        if (daily.length < 5) { results.push({ productId: p.id, name: p.productName || p.name, error: 'Not enough data' }); continue; }
+        let sellingPrice = Number(p.sellingPrice || p.price || 0);
+        const costPrice = Number(p.price || p.costPrice || sellingPrice);
+        if (sellingPrice < costPrice) sellingPrice = costPrice;
+        const payload = {
+          productId: p.id,
+            productName: p.productName || p.name || 'Product',
+            costPrice,
+            sellingPrice,
+            salesHistory: daily.map(d => ({ date: d.date, units: d.units })),
+            stockLevel: Number(p.stockLevel || 0),
+            assumedLeadTimeDays: leadTimeDays
+        };
+        const res = await fetch(chosenEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        let data = null; try { data = await res.json(); } catch (_) {}
+        if (!res.ok) {
+          results.push({ productId: p.id, name: payload.productName, error: (data && data.detail) || res.status });
+        } else {
+          results.push({ productId: p.id, name: payload.productName, pattern: p.patternType, ...data });
+        }
+      } catch (e) {
+        results.push({ productId: p.id, name: p.productName || p.name, error: e.message || 'error' });
+      }
+    }
+    setBulkResults(results);
+    setBulkRunning(false);
   };
 
   return (
@@ -180,6 +244,10 @@ function Analytics() {
             ))}
           </select>
         </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-600 mb-1">Lead Time (days)</label>
+          <input type="number" min={1} max={60} value={leadTimeDays} onChange={e=>setLeadTimeDays(Number(e.target.value)||7)} className="border rounded px-3 py-2 w-28" />
+        </div>
         <button
           onClick={runAnalysis}
           disabled={!selectedProduct || running || !salesHistory.length}
@@ -192,6 +260,12 @@ function Analytics() {
           type="button"
           className="px-4 h-10 rounded-md text-sm font-medium border border-gray-300 bg-white hover:bg-gray-50"
         >Test Connection</button>
+        <button
+          onClick={runAIDemoAll}
+          disabled={bulkRunning}
+          type="button"
+          className="px-4 h-10 rounded-md text-sm font-medium border border-indigo-300 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50"
+        >{bulkRunning ? 'Running demo…' : 'Run AI Demo (All Pattern Items)'}</button>
       </div>
 
       {loading && <div className="text-gray-500">Loading products…</div>}
@@ -241,11 +315,20 @@ function Analytics() {
             <ResponsiveContainer width="100%" height={280}>
               <PieChart>
                 <Pie
-                  data={[
-                    { name: 'Stock Level', value: Number(selectedProduct.stockLevel || 0) },
-                    { name: 'Sold', value: salesHistory.reduce((a, b) => a + Number(b.units || 0), 0) },
-                    { name: 'Other', value: Math.max(0,  (Number(selectedProduct.stockLevel || 0) - salesHistory.reduce((a,b)=> a + Number(b.units||0),0))) }
-                  ]}
+                  data={( () => {
+                    const stock = Number(selectedProduct.stockLevel || 0);
+                    const sold = salesHistory.reduce((a,b)=> a + Number(b.units||0), 0);
+                    // Remaining is current stock (we don't know original capacity reliably), so visualize sold vs remaining.
+                    const remaining = Math.max(0, stock);
+                    // If all zero show placeholder slice so chart renders.
+                    if (sold === 0 && remaining === 0) {
+                      return [{ name: 'No Data', value: 1, placeholder: true }];
+                    }
+                    return [
+                      { name: 'Sold', value: sold },
+                      { name: 'Remaining Stock', value: remaining }
+                    ];
+                  })()}
                   cx="50%"
                   cy="50%"
                   outerRadius={100}
@@ -257,20 +340,37 @@ function Analytics() {
                 <Tooltip />
               </PieChart>
             </ResponsiveContainer>
+            {Number(selectedProduct.stockLevel||0) === 0 && salesHistory.reduce((a,b)=> a + Number(b.units||0),0) === 0 && (
+              <p className="text-xs text-gray-500 mt-2">No stock or sales data yet – record a sale to populate.</p>
+            )}
           </div>
 
           {analysis && (
             <div className="bg-white shadow rounded-lg p-4 md:col-span-2">
               <h2 className="text-lg font-semibold mb-4">AI Forecast & Recommendation</h2>
-              <div className="grid sm:grid-cols-2 gap-4 text-sm">
+              <div className="grid lg:grid-cols-3 sm:grid-cols-2 gap-4 text-sm">
                 <div><strong>Model:</strong> {analysis.modelUsed}</div>
-                <div><strong>Avg Next 7 Days:</strong> {analysis.forecastAvgNext7}</div>
-                <div><strong>Historical Avg:</strong> {analysis.avgHistoricalDemand}</div>
-                <div><strong>Estimated Profit:</strong> ₹{analysis.estimatedProfit}</div>
+                <div><strong>Avg Next 7d:</strong> {analysis.forecastAvgNext7}</div>
+                <div><strong>Hist Avg:</strong> {analysis.avgHistoricalDemand}</div>
                 <div><strong>Unit Margin:</strong> ₹{analysis.unitMargin}</div>
-                {analysis._endpoint && <div className="col-span-2 text-xs text-gray-500"><strong>Endpoint:</strong> {analysis._endpoint}</div>}
+                <div><strong>Est Profit:</strong> ₹{analysis.estimatedProfit}</div>
+                {analysis.analytics && <div><strong>Margin %:</strong> {analysis.analytics.marginPercent}% ({analysis.analytics.marginCategory})</div>}
+                {analysis.analytics && <div><strong>Pattern:</strong> {analysis.analytics.pattern}</div>}
+                {analysis.analytics && <div><strong>Trend Slope:</strong> {analysis.analytics.trendSlope}</div>}
+                {analysis.analytics && <div><strong>Volatility:</strong> {analysis.analytics.volatility}</div>}
+                {analysis.analytics && <div><strong>Risk Score:</strong> <span className={`px-2 py-0.5 rounded text-white text-xs ${analysis.analytics.riskScore>=70?'bg-red-600':analysis.analytics.riskScore>=40?'bg-amber-500':'bg-emerald-600'}`}>{analysis.analytics.riskScore}</span></div>}
+                {analysis.analytics && <div><strong>Stock:</strong> {analysis.analytics.stockLevel}</div>}
+                {analysis.analytics && <div><strong>Days Inv Rem:</strong> {analysis.analytics.daysInventoryRemaining ?? '—'}</div>}
+                {analysis.analytics && <div><strong>Safety Stock:</strong> {analysis.analytics.safetyStock}</div>}
+                {analysis.analytics && <div><strong>Reorder Point:</strong> {analysis.analytics.reorderPoint ?? '—'}</div>}
+                {analysis.analytics && <div><strong>Suggested Order:</strong> {analysis.analytics.suggestedOrderQty ?? '—'}</div>}
+                {analysis.analytics && <div><strong>Lead Time:</strong> {analysis.analytics.leadTimeDays}d</div>}
+                {analysis._endpoint && <div className="col-span-full text-xs text-gray-500"><strong>Endpoint:</strong> {analysis._endpoint}</div>}
               </div>
               <p className="mt-4 font-medium text-emerald-700">{analysis.recommendation}</p>
+              {analysis.analytics && (
+                <p className="mt-1 text-xs text-gray-500">Action: <span className="font-semibold">{analysis.analytics.action}</span></p>
+              )}
               {analysis.forecastPoints && (
                 <div className="mt-4 overflow-x-auto">
                   <table className="min-w-full text-xs border">
@@ -293,6 +393,46 @@ function Analytics() {
               )}
             </div>
           )}
+        </div>
+      )}
+      {bulkResults.length > 0 && (
+        <div className="mt-8 bg-white shadow rounded-lg p-4">
+          <h2 className="text-lg font-semibold mb-4">AI Demo Summary (Pattern Items)</h2>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs border">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="px-2 py-1 border">Product</th>
+                  <th className="px-2 py-1 border">Pattern</th>
+                  <th className="px-2 py-1 border">Hist Avg</th>
+                  <th className="px-2 py-1 border">Forecast Avg 7d</th>
+                  <th className="px-2 py-1 border">Margin (₹)</th>
+                  <th className="px-2 py-1 border">Risk</th>
+                  <th className="px-2 py-1 border">Action</th>
+                  <th className="px-2 py-1 border">Recommendation</th>
+                  <th className="px-2 py-1 border">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulkResults.map(r => (
+                  <tr key={r.productId} className="odd:bg-white even:bg-gray-50">
+                    <td className="px-2 py-1 border whitespace-nowrap" title={r.name}>{r.name}</td>
+                    <td className="px-2 py-1 border text-gray-600">{r.pattern || '-'}</td>
+                    <td className="px-2 py-1 border">{r.avgHistoricalDemand ?? '—'}</td>
+                    <td className="px-2 py-1 border">{r.forecastAvgNext7 ?? '—'}</td>
+                    <td className="px-2 py-1 border">{r.unitMargin ?? '—'}</td>
+                    <td className="px-2 py-1 border">{r.analytics ? (
+                      <span className={`px-2 py-0.5 rounded text-white text-xs ${r.analytics.riskScore>=70?'bg-red-600':r.analytics.riskScore>=40?'bg-amber-500':'bg-emerald-600'}`}>{r.analytics.riskScore}</span>
+                    ) : '—'}</td>
+                    <td className="px-2 py-1 border">{r.analytics?.action || '—'}</td>
+                    <td className="px-2 py-1 border text-xs max-w-[220px]">{r.recommendation || '—'}</td>
+                    <td className="px-2 py-1 border">{r.error ? <span className="text-red-600">Error</span> : 'OK'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-500 mt-3">Patterns: growth → rising demand, decline → slowdown, stable → steady, weekend/seasonal/spiky show variability. Risk blends pattern, volatility, margin & stock coverage.</p>
         </div>
       )}
     </div>

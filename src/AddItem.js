@@ -3,6 +3,7 @@ import { X, Plus, ChevronDown, Upload, RotateCcw } from 'lucide-react';
 
 
 import { collection, addDoc } from 'firebase/firestore';
+import QRCode from 'qrcode';
 // Removed unused named import { firebase } which doesn't exist in confige. We only need db.
 import { db } from './firebaseConfig';
 
@@ -55,13 +56,13 @@ function AddItem({ onClose, onAddItem }) {
 
     // Validate required fields
     if (!formData.productName || !formData.sku || !formData.stockLevel || !formData.expiryDate || !formData.price) {
-      alert('Please fill in all required fields: Product Name, SKU, Stock Level, Expiry Date, and Price');
+      alert('Please fill in all required fields: Product Name, SKU, Stock Level, Expiry Date, and Price (₹)');
       return;
     }
 
     try {
-      // Add to Firestore
-      const docRef = await addDoc(collection(db, "inventory"), {
+      // Build QR payload (can be extended). Use doc ID after creation so first create minimal then update.
+      const basePayload = {
         productName: formData.productName,
         sku: formData.sku,
         stockLevel: Number(formData.stockLevel),
@@ -75,14 +76,29 @@ function AddItem({ onClose, onAddItem }) {
         sellingPrice: Number(formData.sellingPrice),
         additionalInfo: formData.additionalInfo,
         createdAt: new Date()
-      });
+      };
+      const docRef = await addDoc(collection(db, "inventory"), basePayload);
+
+      // Generate QR code data URL with product id so scanner can fetch it.
+      const qrData = JSON.stringify({ type: 'inventory_item', id: docRef.id, sku: basePayload.sku });
+      try {
+        const dataUrl = await QRCode.toDataURL(qrData, { margin: 1, scale: 4 });
+        // Update document with qrCode field (store small data URL string)
+        // Avoid import of updateDoc here to keep minimal; simple workaround: not updating if failure.
+        // Lazy import to reduce bundle size if tree-shaking doesn't remove.
+        const { updateDoc, doc } = await import('firebase/firestore');
+        await updateDoc(doc(db, 'inventory', docRef.id), { qrCode: dataUrl, qrPayload: qrData });
+      } catch (qrErr) {
+        console.warn('QR generation failed', qrErr);
+      }
 
       alert("Item added successfully!");
 
       if (onAddItem) {
         onAddItem({
           ...formData,
-          id: docRef.id // Pass the Firebase document ID
+          id: docRef.id,
+          qrCode: undefined
         });
       }
 

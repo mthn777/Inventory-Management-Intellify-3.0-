@@ -40,6 +40,8 @@ class ProductData(BaseModel):
     costPrice: float = Field(..., ge=0)
     sellingPrice: float = Field(..., ge=0)
     salesHistory: List[SalesPoint]  # chronological or unordered list
+    stockLevel: Optional[float] = Field(None, ge=0, description="Current on-hand stock level")
+    assumedLeadTimeDays: Optional[int] = Field(7, ge=1, le=60, description="Assumed supplier lead time in days")
 
     @validator("sellingPrice")
     def validate_margin(cls, v, values):
@@ -91,16 +93,111 @@ def analyze_product(data: ProductData) -> Dict[str, Any]:
         ]
 
     avg_demand = float(df['y'].mean())
-    if demand_next_week > avg_demand * 1.1:
-        recommendation = "⚡ Restock - Rising demand and healthy margin." if unit_margin > 0 else "⚠️ Rising demand but negative margin — review pricing."
-    elif demand_next_week < avg_demand * 0.8:
-        recommendation = "📉 Slowdown expected - avoid large restock." if unit_margin > 0 else "🛑 Low demand & negative margin - consider discontinuing."
+
+    # ---------- Extended analytics ----------
+    days_history = len(df)
+    recent14 = df.tail(min(14, days_history))
+    recent_avg14 = float(recent14['y'].mean()) if len(recent14) else avg_demand
+    # Trend via simple linear regression (index vs y)
+    import math
+    idx = list(range(len(df)))
+    n = len(idx)
+    mean_x = sum(idx)/n
+    mean_y = float(df['y'].mean())
+    cov = sum((x-mean_x)*(y-mean_y) for x, y in zip(idx, df['y']))
+    var_x = sum((x-mean_x)**2 for x in idx) or 1
+    slope = cov/var_x  # units per day
+    # Volatility (coefficient of variation)
+    std = float(df['y'].std()) if n > 1 else 0.0
+    volatility = (std/mean_y) if mean_y else 0.0
+    # Weekend lift
+    df['dow'] = df['ds'].dt.dayofweek
+    weekend_avg = float(df[df['dow'] >= 5]['y'].mean()) if any(df['dow']>=5) else 0
+    weekday_avg = float(df[df['dow'] < 5]['y'].mean()) if any(df['dow']<5) else 0
+    weekend_lift = (weekend_avg/weekday_avg) if weekday_avg else 0
+    # Pattern detection
+    pattern = 'stable'
+    slope_threshold = max(0.05, 0.05 * avg_demand)  # adaptive minimal change
+    if slope > slope_threshold:
+        pattern = 'growth'
+    elif slope < -slope_threshold:
+        pattern = 'decline'
+    elif volatility > 0.9:
+        pattern = 'spiky'
+    elif weekend_lift > 1.4:
+        pattern = 'weekend_peaks'
+    # Seasonal quick heuristic (7-day periodic variance) – compare first and last quarter mean
+    # (kept simple to avoid heavy libs)
+    quarter = max(2, n//4)
+    if pattern == 'stable' and quarter*2 <= n:
+        early = float(df['y'].head(quarter).mean())
+        late = float(df['y'].tail(quarter).mean())
+        diff_ratio = abs(late-early)/avg_demand if avg_demand else 0
+        if diff_ratio > 0.4 and abs(slope) < slope_threshold:
+            pattern = 'seasonal_shift'
+
+    margin_percent = (unit_margin / data.sellingPrice * 100) if data.sellingPrice else 0
+    margin_category = 'high' if margin_percent >= 40 else 'medium' if margin_percent >= 20 else 'low'
+
+    # Inventory metrics
+    stock_level = data.stockLevel if data.stockLevel is not None else None
+    lead_time = data.assumedLeadTimeDays or 7
+    avg_daily_demand = recent_avg14 if recent_avg14 > 0 else avg_demand
+    std_daily = std or 0
+    safety_stock = 0
+    reorder_point = None
+    days_inventory_remaining = None
+    suggested_order_qty = None
+    if stock_level is not None and avg_daily_demand > 0:
+        # Safety stock using 95% service level approx Z=1.65
+        safety_stock = round(1.65 * std_daily * math.sqrt(lead_time), 2)
+        reorder_point = round(avg_daily_demand * lead_time + safety_stock, 2)
+        days_inventory_remaining = round(stock_level / avg_daily_demand, 2)
+        target_days = 30
+        suggested_order_qty = max(0, math.ceil(target_days * avg_daily_demand - stock_level))
+
+    # Demand forecast vs history decision logic
+    growth_ratio = (demand_next_week / avg_demand) if avg_demand else 1
+    if growth_ratio > 1.15 and unit_margin > 0:
+        base_rec = 'Rising demand – accelerate restock'
+        action = 'RESTOCK_NOW'
+    elif pattern == 'decline' and margin_category == 'low':
+        base_rec = 'Declining demand & low margin – consider discontinuation or price increase'
+        action = 'REVIEW_OR_DISCONTINUE'
+    elif pattern == 'decline':
+        base_rec = 'Demand declining – reduce order size'
+        action = 'REDUCE_ORDERS'
+    elif pattern in ('spiky','weekend_peaks'):
+        base_rec = 'Irregular demand – keep buffer stock'
+        action = 'MAINTAIN_BUFFER'
+    elif margin_category == 'high' and pattern == 'growth':
+        base_rec = 'High margin growth product – prioritize restock'
+        action = 'PRIORITIZE'
     else:
-        recommendation = "✅ Stable demand - restock normally."
+        base_rec = 'Stable demand – standard replenishment'
+        action = 'STANDARD'
+
+    # Risk score (0 best, 100 worst)
+    risk = 0
+    if pattern == 'decline': risk += 30
+    if volatility > 0.9: risk += 15
+    if margin_category == 'low': risk += 25
+    if stock_level is not None and days_inventory_remaining is not None and days_inventory_remaining < lead_time:
+        risk += 30
+    risk = min(100, risk)
+
+    # Combine into recommendation string
+    inventory_aspect = ''
+    if stock_level is not None and reorder_point is not None:
+        if stock_level < reorder_point:
+            inventory_aspect = f" Current stock ({stock_level}) below reorder point ({reorder_point})."
+        else:
+            inventory_aspect = f" Stock healthy (≥ reorder point {reorder_point})."
+    recommendation = f"{base_rec}.{inventory_aspect} Margin {margin_percent:.1f}% ({margin_category}). Pattern: {pattern}."
 
     breakeven_units = None
     if unit_margin > 0:
-        breakeven_units = 0  # Already profitable per unit; breakeven concept trivial here
+        breakeven_units = 0  # trivial here
 
     return {
         "productId": data.productId,
@@ -113,7 +210,25 @@ def analyze_product(data: ProductData) -> Dict[str, Any]:
         "forecastPoints": forecast_points,
         "modelUsed": model_used,
         "breakevenUnits": breakeven_units,
-        "recommendation": recommendation
+        "recommendation": recommendation,
+        "analytics": {
+            "daysHistory": days_history,
+            "recentAvg14": round(recent_avg14, 2),
+            "trendSlope": round(slope, 4),
+            "volatility": round(volatility, 3),
+            "pattern": pattern,
+            "weekendLift": round(weekend_lift, 2),
+            "marginPercent": round(margin_percent, 2),
+            "marginCategory": margin_category,
+            "riskScore": risk,
+            "stockLevel": stock_level,
+            "daysInventoryRemaining": days_inventory_remaining,
+            "safetyStock": safety_stock,
+            "reorderPoint": reorder_point,
+            "suggestedOrderQty": suggested_order_qty,
+            "leadTimeDays": lead_time,
+            "action": action
+        }
     }
 
 class LowStockAlert(BaseModel):
