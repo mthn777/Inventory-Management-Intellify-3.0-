@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { db } from './firebaseConfig';
 import { collection, getDocs } from 'firebase/firestore';
 import { COLLECTIONS } from './constants';
+import { fetchSalesForProduct, subscribeSalesForProduct, aggregateDaily, seedSalesForProduct } from './Services/salesService';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell
@@ -41,49 +42,122 @@ function Analytics() {
     load();
   }, []);
 
-  // Generate placeholder sales if none (replace with real sales fetch when collection exists)
+  // Real-time sales subscription when product changes
   useEffect(() => {
     if (!selectedProduct) return;
-    // If you later store real daily sales, replace this with Firestore query.
-    const days = 14;
-    const today = new Date();
-    const synthetic = Array.from({ length: days }).map((_, i) => {
-      const d = new Date(today);
-      d.setDate(d.getDate() - (days - 1 - i));
-      return {
-        date: d.toISOString().slice(0, 10),
-        units: Math.max(0, Math.round((selectedProduct.stockLevel || 50) / 10 + Math.random() * 5))
-      };
+    setAnalysis(null);
+    setError('');
+    // initial fetch (in case historical load needed before snapshot ready)
+    fetchSalesForProduct(selectedProduct.id, { days: 60 })
+      .then(async rows => {
+  if (!rows.length && process.env.REACT_APP_DISABLE_SALES_SEED !== 'true') {
+          // attempt seed so user sees output
+            try {
+              const seedResult = await seedSalesForProduct(selectedProduct, { days: 30 });
+              if (seedResult.seeded) {
+                const seededRows = await fetchSalesForProduct(selectedProduct.id, { days: 60 });
+                setSalesHistory(aggregateDaily(seededRows));
+                return;
+              }
+            } catch (se) {
+              console.warn('Seeding failed', se);
+            }
+        }
+        setSalesHistory(aggregateDaily(rows));
+      })
+      .catch(e => { console.error(e); setError('Failed to load sales data'); });
+
+    const unsub = subscribeSalesForProduct(selectedProduct.id, {
+      days: 60,
+      onData: rows => setSalesHistory(aggregateDaily(rows)),
+      onError: e => { console.error(e); setError('Realtime sales error: ' + (e.message || 'unknown')); }
     });
-    setSalesHistory(synthetic);
-    setAnalysis(null); // reset when product switches
+    return () => unsub();
   }, [selectedProduct]);
 
   const runAnalysis = async () => {
     if (!selectedProduct || !salesHistory.length) return;
     setRunning(true);
     setError('');
-    try {
-      const res = await fetch(process.env.REACT_APP_AI_URL || 'http://127.0.0.1:8010/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          productId: selectedProduct.id,
-            productName: selectedProduct.productName || selectedProduct.name || 'Product',
-          costPrice: Number(selectedProduct.price || selectedProduct.costPrice || 0),
-          sellingPrice: Number(selectedProduct.sellingPrice || 0),
-          salesHistory: salesHistory.map(s => ({ date: s.date, units: s.units }))
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'AI service error');
-      setAnalysis(data);
-    } catch (e) {
-      console.error(e);
-      setError(e.message);
-    } finally {
-      setRunning(false);
+    const endpoints = [
+      process.env.REACT_APP_AI_URL,
+      'http://127.0.0.1:8010/analyze',
+      'http://127.0.0.1:8000/analyze',
+      'http://localhost:8010/analyze',
+      'http://localhost:8000/analyze'
+    ].filter(Boolean);
+
+    const costPrice = Number(selectedProduct.price || selectedProduct.costPrice || 0);
+    let sellingPrice = selectedProduct.sellingPrice !== undefined && selectedProduct.sellingPrice !== ''
+      ? Number(selectedProduct.sellingPrice)
+      : costPrice; // fallback to costPrice if missing
+    if (sellingPrice < costPrice) sellingPrice = costPrice; // avoid validation failure
+
+    const payloadObj = {
+      productId: selectedProduct.id,
+      productName: selectedProduct.productName || selectedProduct.name || 'Product',
+      costPrice,
+      sellingPrice,
+      salesHistory: salesHistory.map(s => ({ date: s.date, units: s.units }))
+    };
+    const payload = JSON.stringify(payloadObj);
+
+    const networkErrors = [];
+
+    const extractError = (data, res) => {
+      if (!data) return res.status + ' ' + res.statusText;
+      let d = data.detail || data.error || data.message;
+      if (Array.isArray(d)) {
+        d = d.map(x => x.msg || JSON.stringify(x)).join('; ');
+      }
+      if (typeof d === 'object') {
+        d = JSON.stringify(d);
+      }
+      if (d && d.toLowerCase().includes('selling price cannot be less')) {
+        return 'Selling price < cost price. Adjusted automatically to cost (' + costPrice + '). Save a valid selling price to improve margin.';
+      }
+      if (d && d.toLowerCase().includes('at least 5 days')) {
+        return 'Need ≥5 days of sales history (currently ' + salesHistory.length + '). Record more sales or keep seeding enabled.';
+      }
+      return d || ('HTTP ' + res.status);
+    };
+
+    for (const url of endpoints) {
+      try {
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
+        let data = null;
+        try { data = await res.json(); } catch (_) { /* ignore */ }
+        if (!res.ok) {
+          const msg = extractError(data, res);
+          setError(msg + ' (endpoint: ' + url + ')');
+          setRunning(false);
+          return;
+        }
+        setAnalysis({ ...data, _endpoint: url });
+        setRunning(false);
+        return;
+      } catch (e) {
+        networkErrors.push(url + ': ' + (e.message || 'network error'));
+      }
     }
+    setError('AI service unreachable. Tried endpoints: ' + networkErrors.join(' | '));
+    setRunning(false);
+  };
+
+  const testConnection = async () => {
+    setError('');
+    const urls = [
+      process.env.REACT_APP_AI_URL,
+      'http://127.0.0.1:8010/analyze',
+      'http://127.0.0.1:8000/analyze'
+    ].filter(Boolean);
+    for (const u of urls) {
+      try {
+        const res = await fetch(u, { method: 'OPTIONS' });
+        if (res.ok) { setError('AI reachable at ' + u); return; }
+      } catch (e) { /* continue */ }
+    }
+    setError('AI service not reachable on any known URL.');
   };
 
   return (
@@ -113,6 +187,11 @@ function Analytics() {
         >
           {running ? 'Analyzing...' : 'Run AI Analysis'}
         </button>
+        <button
+          onClick={testConnection}
+          type="button"
+          className="px-4 h-10 rounded-md text-sm font-medium border border-gray-300 bg-white hover:bg-gray-50"
+        >Test Connection</button>
       </div>
 
       {loading && <div className="text-gray-500">Loading products…</div>}
@@ -124,12 +203,19 @@ function Analytics() {
             <h2 className="text-lg font-semibold mb-2">Sales Trend</h2>
             {salesHistory.length ? (
               <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={salesHistory}>
+                <LineChart data={salesHistory.map((row, idx, arr) => {
+                  // compute 7-day moving average for trend
+                  const windowStart = Math.max(0, idx - 6);
+                  const slice = arr.slice(windowStart, idx + 1);
+                  const avg = slice.reduce((a,b)=>a+Number(b.units||0),0) / slice.length;
+                  return { ...row, ma7: Number(avg.toFixed(2)) };
+                })}>
                   <CartesianGrid stroke="#eee" />
                   <XAxis dataKey="date" />
                   <YAxis />
                   <Tooltip />
-                  <Line type="monotone" dataKey="units" stroke="#059669" strokeWidth={2} />
+                  <Line type="monotone" dataKey="units" stroke="#059669" strokeWidth={2} name="Units" />
+                  <Line type="monotone" dataKey="ma7" stroke="#3b82f6" strokeWidth={2} strokeDasharray="4 4" name="7d MA" />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
@@ -157,8 +243,8 @@ function Analytics() {
                 <Pie
                   data={[
                     { name: 'Stock Level', value: Number(selectedProduct.stockLevel || 0) },
-                    { name: 'Sold (sample)', value: salesHistory.reduce((a, b) => a + b.units, 0) },
-                    { name: 'Other', value: Math.max(0,  (Number(selectedProduct.stockLevel || 0) / 5)) }
+                    { name: 'Sold', value: salesHistory.reduce((a, b) => a + Number(b.units || 0), 0) },
+                    { name: 'Other', value: Math.max(0,  (Number(selectedProduct.stockLevel || 0) - salesHistory.reduce((a,b)=> a + Number(b.units||0),0))) }
                   ]}
                   cx="50%"
                   cy="50%"
@@ -182,6 +268,7 @@ function Analytics() {
                 <div><strong>Historical Avg:</strong> {analysis.avgHistoricalDemand}</div>
                 <div><strong>Estimated Profit:</strong> ₹{analysis.estimatedProfit}</div>
                 <div><strong>Unit Margin:</strong> ₹{analysis.unitMargin}</div>
+                {analysis._endpoint && <div className="col-span-2 text-xs text-gray-500"><strong>Endpoint:</strong> {analysis._endpoint}</div>}
               </div>
               <p className="mt-4 font-medium text-emerald-700">{analysis.recommendation}</p>
               {analysis.forecastPoints && (

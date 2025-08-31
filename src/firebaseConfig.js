@@ -1,23 +1,60 @@
-// Centralized Firebase initialization (renamed from confige.js)
-import { initializeApp } from "firebase/app";
+// Centralized Firebase initialization (uses environment variables, avoids committing secrets)
+import { initializeApp, getApps } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
-import { getMessaging } from "firebase/messaging";
+// messaging optional; wrap later
+
+// Helper to read required env variable
+function req(name) {
+  let v = process.env[name];
+  if (!v) {
+    console.warn(`[Firebase] Env var ${name} is missing. Set it in .env`);
+    return '';
+  }
+  // Strip wrapping quotes if user copied with quotes
+  v = v.trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    v = v.slice(1,-1);
+  }
+  return v;
+}
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBS70ifrXPZ29dHq9QkhOyPad9VLkUt4EI",
-  authDomain: "project-3-1cf82.firebaseapp.com",
-  projectId: "project-3-1cf82",
-  storageBucket: "project-3-1cf82.appspot.com",
-  messagingSenderId: "821065331351",
-  appId: "1:821065331351:web:39ab987bc41e9941b4afd2",
-  measurementId: "G-LQWC3B1TPH",
-  databaseURL: "https://project-3-1cf82-default-rtdb.firebaseio.com"
+  apiKey: req('REACT_APP_FIREBASE_API_KEY'),
+  authDomain: req('REACT_APP_FIREBASE_AUTH_DOMAIN'),
+  projectId: req('REACT_APP_FIREBASE_PROJECT_ID'),
+  storageBucket: req('REACT_APP_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: req('REACT_APP_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: req('REACT_APP_FIREBASE_APP_ID'),
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID || undefined,
+  databaseURL: process.env.REACT_APP_FIREBASE_DATABASE_URL || undefined
 };
 
-export const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
-export const messaging = getMessaging(app);
+const required = ['apiKey','authDomain','projectId','appId'];
+const missingRequired = required.filter(k => !firebaseConfig[k]);
+let appInstance;
+if (missingRequired.length) {
+  console.error('[Firebase] Missing required config values:', missingRequired.join(', '));
+  console.error('[Firebase] Frontend will defer Firebase-dependent features until config is fixed.');
+} else {
+  try {
+    appInstance = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+  } catch (e) {
+    console.error('[Firebase] initializeApp failed:', e);
+  }
+}
+
+export const app = appInstance;
+export const auth = appInstance ? getAuth(appInstance) : undefined;
+export const db = appInstance ? getFirestore(appInstance) : undefined;
+export const storage = appInstance ? getStorage(appInstance) : undefined;
+export const getMessagingSafe = () => {
+  if (!appInstance) return undefined;
+  try {
+    const { getMessaging } = require('firebase/messaging');
+    return getMessaging(appInstance);
+  } catch {
+    return undefined;
+  }
+};

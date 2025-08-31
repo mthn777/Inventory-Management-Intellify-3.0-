@@ -27,7 +27,9 @@ import {
   CheckCircle,
   AlertTriangle
 } from 'lucide-react';
-import { collection, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { recordSale, fetchAllSales, subscribeAllSales, groupSalesByDateWithRevenue, rankTopProducts } from './Services/salesService';
+import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { collection, getDocs, deleteDoc, doc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 import Analytics from './Analytics';
 import Products from './Products';
@@ -37,6 +39,9 @@ function Dashboard({ onLogout, userData }) {
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResult, setSearchResult] = useState(null);
+  // Products (must be declared before handlers referencing it)
+  const [products, setProducts] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Search handlers
   const handleSearchChange = (e) => {
@@ -63,9 +68,16 @@ function Dashboard({ onLogout, userData }) {
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showSellModal, setShowSellModal] = useState(false);
+  const [sellData, setSellData] = useState({ units: '', pricePerUnit: '' });
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const userMenuRef = useRef(null);
+  // Low stock alert threshold & alert tracking (declare early so effects can use)
+  const [lowStockThreshold, setLowStockThreshold] = useState(5);
+  const [stockAlerts, setStockAlerts] = useState([]); // { id, productId, name, level, type, ts }
+  const lastAlertRef = useRef({});
+  const lastEmailRef = useRef({});
 
   // Form state for adding new item
   const [newItem, setNewItem] = useState({
@@ -111,10 +123,36 @@ function Dashboard({ onLogout, userData }) {
     };
   }, [sidebarOpen]);
 
-  // Fetch products from Firebase on component mount
+  // Fetch products & set up realtime low-stock alerts
   useEffect(() => {
     fetchProducts();
-  }, []);
+    const invRef = collection(db, 'inventory');
+    const unsub = onSnapshot(invRef, (snap) => {
+      const updated = [];
+      snap.forEach(d => {
+        const data = d.data();
+        updated.push({ id: d.id, name: data.productName, stockLevel: data.stockLevel });
+      });
+      updated.forEach(p => {
+        const level = Number(p.stockLevel || 0);
+        if (level <= lowStockThreshold) {
+          const key = p.id;
+          const prev = lastAlertRef.current[key];
+          if (!prev || prev.level !== level) {
+            // Avoid spamming: only one alert per new level; also throttle to 15s
+            if (!prev || (Date.now() - prev.time) > 15000) {
+              const type = level === 0 ? 'out' : 'low';
+              const alertObj = { id: key + '_' + level + '_' + Date.now(), productId: p.id, name: p.name, level, type, ts: Date.now() };
+              setStockAlerts(a => [alertObj, ...a].slice(0, 6));
+              lastAlertRef.current[key] = { level, time: Date.now() };
+              sendLowStockEmail(alertObj);
+            }
+          }
+        }
+      });
+    }, (err) => console.warn('Realtime inventory error', err));
+  return () => unsub();
+  }, [lowStockThreshold]);
 
   // Function to fetch products from Firebase
   const fetchProducts = async () => {
@@ -171,6 +209,37 @@ function Dashboard({ onLogout, userData }) {
   const handleEditProduct = (product) => {
     setSelectedProduct(product);
     setShowEditModal(true);
+  };
+
+  const openSellModal = (product) => {
+    setSelectedProduct(product);
+    setSellData({ units: '', pricePerUnit: product.sellingPrice || product.price || '' });
+    setShowSellModal(true);
+  };
+
+  const handleRecordSale = async (e) => {
+    e.preventDefault();
+    if (!selectedProduct) return;
+    const units = Number(sellData.units);
+    const pricePerUnit = Number(sellData.pricePerUnit || 0);
+    if (!units || units <= 0) {
+      alert('Enter valid units');
+      return;
+    }
+    if (units > selectedProduct.stockLevel) {
+      alert('Cannot sell more than stock level');
+      return;
+    }
+    try {
+      await recordSale({ productId: selectedProduct.id, units, pricePerUnit });
+      // Update local state
+      setProducts(products.map(p => p.id === selectedProduct.id ? { ...p, stockLevel: p.stockLevel - units, status: (p.stockLevel - units) > 20 ? 'In Stock' : (p.stockLevel - units) > 0 ? 'Low Stock' : 'Out of Stock' } : p));
+      setShowSellModal(false);
+      alert('Sale recorded');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to record sale');
+    }
   };
 
   // Handle delete product
@@ -275,12 +344,65 @@ function Dashboard({ onLogout, userData }) {
     alert(`Product "${itemToAdd.name}" added successfully! The product is now visible in the products table.`);
   };
 
-  const stats = [
-    { title: 'Total Revenue', value: '$45,231', change: '+20.1%', icon: DollarSign, color: 'text-green-600', bgColor: 'bg-green-100' },
-    { title: 'Total Orders', value: '2,350', change: '+180.1%', icon: Users, color: 'text-blue-600', bgColor: 'bg-blue-100' },
-    { title: 'Products Sold', value: '12,234', change: '+19%', icon: TrendingUp, color: 'text-purple-600', bgColor: 'bg-purple-100' },
-    { title: 'Active Products', value: '573', change: '+201', icon: Package, color: 'text-orange-600', bgColor: 'bg-orange-100' }
-  ];
+  const [stats, setStats] = useState([
+    { key: 'revenue', title: 'Total Revenue', value: '$0', change: '', icon: DollarSign, color: 'text-green-600', bgColor: 'bg-green-100' },
+    { key: 'orders', title: 'Total Orders', value: '0', change: '', icon: Users, color: 'text-blue-600', bgColor: 'bg-blue-100' },
+    { key: 'sold', title: 'Products Sold', value: '0', change: '', icon: TrendingUp, color: 'text-purple-600', bgColor: 'bg-purple-100' },
+    { key: 'active', title: 'Active Products', value: '0', change: '', icon: Package, color: 'text-orange-600', bgColor: 'bg-orange-100' }
+  ]);
+  const [salesRangeDays, setSalesRangeDays] = useState(30);
+  const [allSales, setAllSales] = useState([]); // real-time sales slice
+  const [revenueSeries, setRevenueSeries] = useState([]);
+  const [topProducts, setTopProducts] = useState([]);
+  // email alert sender (throttled per product+level 5 min)
+  const sendLowStockEmail = (alertObj) => {
+    const key = alertObj.productId + '_' + alertObj.level;
+    const prev = lastEmailRef.current[key];
+    if (prev && (Date.now() - prev) < 5 * 60 * 1000) return; // 5 min throttle
+    lastEmailRef.current[key] = Date.now();
+    const base = (process.env.REACT_APP_AI_URL || 'http://localhost:8000').replace(/\/$/, '');
+  fetch(base + '/low_stock_alert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        productId: alertObj.productId,
+        productName: alertObj.name,
+        stockLevel: alertObj.level,
+    threshold: lowStockThreshold,
+    toEmail: userData?.email || null
+      })
+    }).catch(e => console.warn('Low stock email send failed', e));
+  };
+
+  // Real-time subscription to all sales
+  useEffect(() => {
+    const unsub = subscribeAllSales({ days: salesRangeDays, onData: setAllSales });
+    return () => unsub && unsub();
+  }, [salesRangeDays]);
+
+  // Recompute stats & derived datasets when products or allSales changes
+  useEffect(() => {
+    const productsMap = new Map(products.map(p => [p.id, p]));
+    let revenue = 0; let totalUnits = 0; let orders = 0;
+    allSales.forEach(s => {
+      const prod = productsMap.get(s.productId);
+      const price = s.pricePerUnit || (prod ? prod.sellingPrice || prod.price || 0 : 0);
+      revenue += Number(price) * Number(s.units || 0);
+      totalUnits += Number(s.units || 0);
+      orders += 1;
+    });
+    const activeProducts = products.length;
+    const fmt = (n) => n.toLocaleString();
+    setStats(prev => prev.map(card => {
+      if (card.key === 'revenue') return { ...card, value: '₹' + revenue.toFixed(2) };
+      if (card.key === 'orders') return { ...card, value: fmt(orders) };
+      if (card.key === 'sold') return { ...card, value: fmt(totalUnits) };
+      if (card.key === 'active') return { ...card, value: fmt(activeProducts) };
+      return card;
+    }));
+    setRevenueSeries(groupSalesByDateWithRevenue(allSales, productsMap));
+    setTopProducts(rankTopProducts(allSales, productsMap, 5));
+  }, [allSales, products]);
 
   const recentActivities = [
     { user: 'John Doe', action: 'restocked', product: 'Fresh Organic Bananas', time: '2 hours ago', avatar: 'JD' },
@@ -289,8 +411,36 @@ function Dashboard({ onLogout, userData }) {
     { user: 'Emily Brown', action: 'marked out of stock', product: 'Fresh Tomatoes', time: '1 day ago', avatar: 'EB' }
   ];
 
-  const [products, setProducts] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+
+  const generateReport = async () => {
+    try {
+      const productsMap = new Map(products.map(p => [p.id, p]));
+      const header = ['productName','date','units','pricePerUnit','estRevenue'];
+      const esc = (v) => {
+        if (v == null) return '';
+        const str = String(v);
+        return /[",\n]/.test(str) ? '"' + str.replace(/"/g,'""') + '"' : str;
+      };
+      const rows = allSales.map(s => {
+        const prod = productsMap.get(s.productId);
+        const unitPrice = s.pricePerUnit || (prod ? prod.sellingPrice || prod.price || 0 : 0);
+        return [prod?.name || '(Unknown)', s.date, s.units, unitPrice, (unitPrice * Number(s.units||0)).toFixed(2)];
+      });
+      const csv = [header.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sales_report_live_${Date.now()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Failed to generate report');
+      console.error(e);
+    }
+  };
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -312,6 +462,24 @@ function Dashboard({ onLogout, userData }) {
   );
 
   return (
+    <>
+    {/* Floating Low Stock Alerts */}
+    <div className="fixed top-20 right-4 z-50 space-y-2 w-64">
+      {stockAlerts.map(alert => (
+        <div key={alert.id} className={`flex items-start gap-2 p-2 rounded-md shadow text-xs border bg-white ${alert.type==='out' ? 'border-red-300' : 'border-amber-300'}`}>
+          <div className={`p-1 rounded ${alert.type==='out' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
+            <AlertTriangle className="w-4 h-4" />
+          </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold truncate" title={alert.name}>{alert.name}</div>
+              <div className="text-gray-600">{alert.type==='out' ? 'Out of Stock' : `Low Stock: ${alert.level}`}</div>
+            </div>
+            <button onClick={() => setStockAlerts(a => a.filter(x => x.id !== alert.id))} className="text-gray-400 hover:text-gray-600">
+              <X className="w-3 h-3" />
+            </button>
+        </div>
+      ))}
+    </div>
     <div className="min-h-screen bg-gray-50">
       {/* Top Navigation */}
       <nav className="bg-white shadow-sm border-b border-gray-200 fixed top-0 left-0 right-0 z-40">
@@ -507,47 +675,80 @@ function Dashboard({ onLogout, userData }) {
 
               {/* Charts and Activity Row */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-                {/* Chart Placeholder */}
+                {/* Revenue Chart */}
                 <div className="lg:col-span-2 bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-200">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 space-y-2 sm:space-y-0">
                     <h3 className="text-lg font-semibold text-gray-900">Revenue Overview</h3>
                     <div className="flex items-center space-x-2">
-                      <select className="text-xs sm:text-sm border border-gray-300 rounded-md px-2 sm:px-3 py-1">
-                        <option>Last 7 days</option>
-                        <option>Last 30 days</option>
-                        <option>Last 3 months</option>
+                      <select className="text-xs sm:text-sm border border-gray-300 rounded-md px-2 sm:px-3 py-1" value={salesRangeDays} onChange={e => setSalesRangeDays(Number(e.target.value))}>
+                        <option value={7}>Last 7 days</option>
+                        <option value={30}>Last 30 days</option>
+                        <option value={90}>Last 3 months</option>
                       </select>
-                      <button className="p-1 hover:bg-gray-100 rounded">
+                      <button className="p-1 hover:bg-gray-100 rounded" onClick={generateReport} title="Download CSV report">
                         <Download className="h-4 w-4 text-gray-500" />
                       </button>
                     </div>
                   </div>
-                  <div className="h-48 sm:h-64 bg-gray-50 rounded-lg flex items-center justify-center">
-                    <div className="text-center">
-                      <BarChart3 className="h-8 w-8 sm:h-12 sm:w-12 text-gray-400 mx-auto mb-2" />
-                      <p className="text-gray-500 text-sm sm:text-base">Chart visualization would go here</p>
-                    </div>
+                  <div className="h-48 sm:h-64">
+                    {revenueSeries.length ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={revenueSeries.map(r => ({ ...r, revenue: Number(r.revenue.toFixed(2)) }))}>
+                          <CartesianGrid stroke="#eee" />
+                          <XAxis dataKey="date" />
+                          <YAxis />
+                          <Tooltip />
+                          <Line type="monotone" dataKey="revenue" stroke="#2563eb" strokeWidth={2} name="Revenue" />
+                          <Line type="monotone" dataKey="units" stroke="#16a34a" strokeWidth={2} strokeDasharray="4 4" name="Units" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-gray-400 text-sm">No sales in range.</div>
+                    )}
                   </div>
                 </div>
-
-                {/* Recent Activity */}
-                <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-200">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
-                  <div className="space-y-3 sm:space-y-4">
-                    {recentActivities.map((activity, index) => (
-                      <div key={index} className="flex items-start space-x-3">
-                        <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-full bg-gradient-to-r from-blue-600 to-purple-600 flex items-center justify-center flex-shrink-0">
-                          <span className="text-white text-xs font-medium">{activity.avatar}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs sm:text-sm text-gray-900">
-                            <span className="font-medium">{activity.user}</span> {activity.action}
-                          </p>
-                          <p className="text-xs sm:text-sm text-gray-500 truncate">{activity.product}</p>
-                          <p className="text-xs text-gray-400">{activity.time}</p>
-                        </div>
+                {/* Top Products & Low Stock */}
+                <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-200 flex flex-col gap-6">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Top Products (Units Sold)</h3>
+                    {topProducts.length ? (
+                      <div className="space-y-3">
+                        {topProducts.map(tp => (
+                          <div key={tp.productId} className="flex items-center justify-between text-sm">
+                            <span className="truncate max-w-[140px]" title={tp.name}>{tp.name}</span>
+                            <span className="font-semibold text-gray-800">{tp.units}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    ) : <div className="text-sm text-gray-500">No sales yet.</div>}
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-md font-semibold text-gray-900">Low Stock Alerts</h4>
+                      <select
+                        value={lowStockThreshold}
+                        onChange={e => setLowStockThreshold(Number(e.target.value))}
+                        className="text-xs border border-gray-300 rounded px-1 py-0.5 bg-white"
+                        title="Threshold"
+                      >
+                        <option value={5}>≤5</option>
+                        <option value={10}>≤10</option>
+                        <option value={20}>≤20</option>
+                      </select>
+                    </div>
+                    {products.filter(p => (p.stockLevel ?? 0) <= lowStockThreshold).length ? (
+                      <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                        {products
+                          .filter(p => (p.stockLevel ?? 0) <= lowStockThreshold)
+                          .sort((a,b)=>(a.stockLevel??0)-(b.stockLevel??0))
+                          .map(p => (
+                            <div key={p.id} className="flex items-center justify-between text-xs px-2 py-1 rounded border bg-white">
+                              <span className="truncate max-w-[120px]" title={p.name}>{p.name}</span>
+                              <span className={`font-semibold ${ (p.stockLevel??0)===0 ? 'text-red-600' : 'text-amber-600'}`}>{p.stockLevel ?? 0}</span>
+                            </div>
+                          ))}
+                      </div>
+                    ) : <div className="text-xs text-gray-500">All stocks above threshold.</div>}
                   </div>
                 </div>
               </div>
@@ -738,6 +939,13 @@ function Dashboard({ onLogout, userData }) {
                                   title="Delete Product"
                                 >
                                   <Trash2 className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={() => openSellModal(product)}
+                                  className="text-emerald-600 hover:text-emerald-900 p-1 hover:bg-emerald-50 rounded transition-colors"
+                                  title="Record Sale"
+                                >
+                                  $<span className="sr-only">Sell</span>
                                 </button>
                               </div>
                             </td>
@@ -1082,6 +1290,48 @@ function Dashboard({ onLogout, userData }) {
         </main>
       </div>
     </div>
+  {showSellModal && selectedProduct && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+          <div className="bg-gradient-to-r from-emerald-600 to-teal-600 p-4 text-white rounded-t-xl flex justify-between items-center">
+            <h3 className="text-lg font-semibold">Record Sale - {selectedProduct.name}</h3>
+            <button onClick={() => setShowSellModal(false)}>
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <form onSubmit={handleRecordSale} className="p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Units Sold</label>
+              <input
+                type="number"
+                min="1"
+                max={selectedProduct.stockLevel}
+                value={sellData.units}
+                onChange={e => setSellData({ ...sellData, units: e.target.value })}
+                className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"
+                required
+              />
+              <p className="mt-1 text-xs text-gray-500">Available: {selectedProduct.stockLevel} units</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Price Per Unit (optional)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={sellData.pricePerUnit}
+                onChange={e => setSellData({ ...sellData, pricePerUnit: e.target.value })}
+                className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <div className="flex space-x-3 pt-2">
+              <button type="submit" className="flex-1 bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700">Save</button>
+              <button type="button" onClick={() => setShowSellModal(false)} className="flex-1 border border-gray-300 py-2 rounded-lg hover:bg-gray-50">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
