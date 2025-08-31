@@ -591,9 +591,9 @@ function Dashboard({ onLogout, userData }) {
               </button>
               <div className="flex items-center ml-4 lg:ml-0">
                 <div className="h-8 w-8 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">T</span>
+                  <span className="text-white font-bold text-sm">Q</span>
                 </div>
-                <span className="ml-3 text-lg sm:text-xl font-bold text-gray-900">TechCraft</span>
+                <span className="ml-3 text-lg sm:text-xl font-bold text-gray-900">Stocks</span>
               </div>
             </div>
 
